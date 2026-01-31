@@ -16,8 +16,19 @@ export const Generator: React.FC = () => {
     const [settings, setSettings] = useState<AppSettings | null>(null);
 
     useEffect(() => {
-        dbService.getAllIdeas().then(setIdeas);
-        dbService.getSettings().then(setSettings);
+        const init = async () => {
+            try {
+                const [loadedIdeas, loadedSettings] = await Promise.all([
+                    dbService.getAllIdeas(),
+                    dbService.getSettings()
+                ]);
+                setIdeas(loadedIdeas);
+                setSettings(loadedSettings);
+            } catch (e) {
+                setError('Failed to connect to database. Make sure the server is running.');
+            }
+        };
+        init();
     }, []);
 
     const handleGenerate = async () => {

@@ -15,7 +15,7 @@ export const SettingsPage: React.FC = () => {
         dbService.getSettings().then(setSettings);
     }, []);
 
-    const handleChange = (field: keyof AppSettings, value: any) => {
+    const handleChange = (field: keyof AppSettings, value: string) => {
         setSettings(prev => ({ ...prev, [field]: value }));
         setSaved(false);
     };

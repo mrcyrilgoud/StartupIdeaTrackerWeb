@@ -12,6 +12,7 @@
   --color-text-primary: #000000;
   --color-text-secondary: #6C6C70;
   --color-border: #C6C6C8;
+  --color-success: #34C759;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -31,6 +32,7 @@
     --color-text-secondary: #EBEBF5;
     /* 60% opacity */
     --color-border: #38383A;
+    --color-success: #30D158;
   }
 }
 
@@ -130,7 +132,7 @@ body {
 .responsive-grid {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
   flex: 1;
   min-height: 0;
 }
@@ -139,23 +141,10 @@ body {
   .responsive-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    /* Use flex growth instead of fixed calc height */
   }
-}
-/* Responsive Grid Utility (Appended) */
-.responsive-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  height: 100%;
 }
 
-@media (min-width: 768px) {
-  .responsive-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    height: calc(100vh - 100px);
-  }
-}
 
 /* Flex Stack Mobile */
 .flex-stack-mobile {
@@ -170,8 +159,22 @@ body {
   }
 }
 
-/* Input Full Width Fix */
-.input {
-  width: 100%;
-  box-sizing: border-box;
+
+
+/* Dot Animation */
+@keyframes dot-bounce {
+
+  0%,
+  80%,
+  100% {
+    opacity: 0;
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+.dot-animate {
+  animation: dot-bounce 1.4s infinite ease-in-out both;
 }

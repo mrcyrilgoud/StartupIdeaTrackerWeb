@@ -1,51 +1,89 @@
-import { openDB, DBSchema } from 'idb';
 import { Idea, AppSettings } from '../types';
 
-interface MyDB extends DBSchema {
-    ideas: {
-        key: string;
-        value: Idea;
-        indexes: { 'by-timestamp': number };
-    };
-    settings: {
-        key: string;
-        value: AppSettings;
-    };
-}
-
-const dbPromise = openDB<MyDB>('startup-idea-tracker-db', 1, {
-    upgrade(db) {
-        const ideaStore = db.createObjectStore('ideas', { keyPath: 'id' });
-        ideaStore.createIndex('by-timestamp', 'timestamp');
-
-        db.createObjectStore('settings', { keyPath: 'key' as any }); // 'key' is not a property of AppSettings but we store it as singular object? logic adjustment below
-    },
-});
+const API_URL = 'http://localhost:3001/ideas';
 
 export const dbService = {
     async getAllIdeas(): Promise<Idea[]> {
-        return (await dbPromise).getAllFromIndex('ideas', 'by-timestamp');
+        try {
+            const response = await fetch(API_URL);
+            if (!response.ok) throw new Error(response.statusText);
+            const ideas: Idea[] = await response.json();
+            return ideas;
+        } catch (error) {
+            console.error('Failed to fetch ideas:', error);
+            throw error; // Propagate error so UI knows db is down
+        }
     },
 
     async getIdea(id: string): Promise<Idea | undefined> {
-        return (await dbPromise).get('ideas', id);
+        try {
+            const response = await fetch(`${API_URL}/${id}`);
+            if (!response.ok) {
+                if (response.status === 404) return undefined;
+                throw new Error(`Error fetching idea: ${response.statusText}`);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error(`Failed to fetch idea ${id}:`, error);
+            return undefined;
+        }
     },
 
     async saveIdea(idea: Idea): Promise<string> {
-        return (await dbPromise).put('ideas', idea);
+        try {
+            // Optimistic Update: Try to PUT first (99% of cases)
+            // specific to json-server: PUT /ideas/:id updates the item
+            const response = await fetch(`${API_URL}/${idea.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(idea),
+            });
+
+            // If successful, we are done
+            if (response.ok) {
+                return idea.id;
+            }
+
+            // If 404, it doesn't exist yet, so we POST (Create)
+            if (response.status === 404) {
+                const createResponse = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(idea),
+                });
+
+                if (!createResponse.ok) {
+                    throw new Error(`Failed to create idea: ${createResponse.statusText}`);
+                }
+                return idea.id;
+            }
+
+            throw new Error(`Failed to save idea: ${response.statusText}`);
+        } catch (error) {
+            console.error('Error saving idea:', error);
+            throw error;
+        }
     },
 
     async deleteIdea(id: string): Promise<void> {
-        return (await dbPromise).delete('ideas', id);
+        try {
+            const response = await fetch(`${API_URL}/${id}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to delete idea: ${response.statusText}`);
+            }
+        } catch (error) {
+            console.error(`Failed to delete idea ${id}:`, error);
+            throw error;
+        }
     },
 
     async getSettings(): Promise<AppSettings> {
-        await dbPromise;
-        // We store settings as a single object with a fixed key 'app-settings' or similar, 
-        // or we could use localStorage for settings. Ideally, IDB is fine.
-        // Let's use localStorage for settings for sync simplicity, IDB for heavy data.
-        // BUT since we are already here, let's just stick to IDB or localStorage.
-        // Actually, localStorage is sync, easier for initialization.
         const stored = localStorage.getItem('app-settings');
         if (stored) return JSON.parse(stored);
 
