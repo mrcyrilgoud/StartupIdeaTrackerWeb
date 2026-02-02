@@ -1,8 +1,8 @@
 import React from 'react';
-import { X, FileText, Download, Code } from 'lucide-react';
+import { X, FileText, Download, Code, Swords } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-interface BusinessViabilityModalProps {
+interface CompetitorAnalysisModalProps {
     isOpen: boolean;
     loading: boolean;
     ideaTitle: string;
@@ -45,7 +45,7 @@ const markdownToHtml = (md: string): string => {
         });
 };
 
-export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
+export const CompetitorAnalysisModal: React.FC<CompetitorAnalysisModalProps> = ({
     isOpen,
     loading,
     ideaTitle,
@@ -62,7 +62,7 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Business Viability Report - ${escapeHtml(ideaTitle)}</title>
+                <title>Competitor Analysis - ${escapeHtml(ideaTitle)}</title>
                 <style>
                     body { 
                         font-family: system-ui, -apple-system, sans-serif; 
@@ -99,7 +99,7 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `viability-report-${ideaTitle.replace(/\s+/g, '-').toLowerCase()}.md`;
+        a.download = `competitor-analysis-${ideaTitle.replace(/\s+/g, '-').toLowerCase()}.md`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -111,7 +111,7 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Business Viability Report - ${escapeHtml(ideaTitle)}</title>
+    <title>Competitor Analysis - ${escapeHtml(ideaTitle)}</title>
     <style>
         body { 
             font-family: system-ui, -apple-system, sans-serif; 
@@ -140,7 +140,7 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `viability-report-${ideaTitle.replace(/\s+/g, '-').toLowerCase()}.html`;
+        a.download = `competitor-analysis-${ideaTitle.replace(/\s+/g, '-').toLowerCase()}.html`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -179,11 +179,21 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                     justifyContent: 'space-between',
                     alignItems: 'center'
                 }}>
-                    <div>
-                        <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Business Viability Report</h2>
-                        <p style={{ margin: '4px 0 0 0', color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
-                            {ideaTitle}
-                        </p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ 
+                            backgroundColor: 'rgba(255, 59, 48, 0.1)', 
+                            padding: '8px', 
+                            borderRadius: '8px',
+                            color: '#ff3b30'
+                        }}>
+                            <Swords size={24} />
+                        </div>
+                        <div>
+                            <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Competitor Analysis</h2>
+                            <p style={{ margin: '4px 0 0 0', color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
+                                {ideaTitle}
+                            </p>
+                        </div>
                     </div>
                     <button
                         onClick={onClose}
@@ -213,20 +223,20 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                                 width: '48px',
                                 height: '48px',
                                 border: '3px solid var(--color-border)',
-                                borderTopColor: 'var(--color-accent)',
+                                borderTopColor: '#ff3b30',
                                 borderRadius: '50%',
                                 animation: 'spin 1s linear infinite',
                                 marginBottom: '16px'
                             }} />
-                            <p style={{ margin: 0, fontSize: '1rem' }}>Analyzing business viability...</p>
+                            <p style={{ margin: 0, fontSize: '1rem' }}>Identifying competitors...</p>
                             <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', opacity: 0.7 }}>
-                                This may take a moment for comprehensive analysis
+                                Scouring the market landscape for threats and opportunities
                             </p>
                             <p style={{
                                 margin: '16px 0 0 0',
                                 fontSize: '0.8rem',
-                                color: 'var(--color-accent)',
-                                backgroundColor: 'rgba(88, 86, 214, 0.1)',
+                                color: '#ff3b30',
+                                backgroundColor: 'rgba(255, 59, 48, 0.1)',
                                 padding: '8px 16px',
                                 borderRadius: '8px'
                             }}>

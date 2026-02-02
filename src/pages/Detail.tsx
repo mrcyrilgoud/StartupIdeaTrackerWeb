@@ -7,7 +7,8 @@ import { Chat } from '../components/features/Chat';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OpenCodeModal } from '../components/OpenCodeModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
-import { ArrowLeft, Sparkles, Trash2, Terminal, Search } from 'lucide-react';
+import { CompetitorAnalysisModal } from '../components/CompetitorAnalysisModal';
+import { ArrowLeft, Sparkles, Trash2, Terminal, Search, Swords } from 'lucide-react';
 
 export const Detail: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -20,6 +21,11 @@ export const Detail: React.FC = () => {
     const [viabilityLoading, setViabilityLoading] = useState(false);
     const [viabilityReport, setViabilityReport] = useState('');
     const [showViabilityModal, setShowViabilityModal] = useState(false);
+
+    // Competitor analysis state
+    const [competitorLoading, setCompetitorLoading] = useState(false);
+    const [competitorReport, setCompetitorReport] = useState('');
+    const [showCompetitorModal, setShowCompetitorModal] = useState(false);
 
     // Ref to track the latest idea state for debounced saving
     const latestIdeaRef = useRef<Idea | null>(null);
@@ -171,6 +177,32 @@ export const Detail: React.FC = () => {
         }
     };
 
+    // Handler for competitor analysis
+    const handleAnalyzeCompetitors = async () => {
+        if (!idea || !settings) return;
+
+        try {
+            setCompetitorReport('');
+            setShowCompetitorModal(true);
+            setCompetitorLoading(true);
+
+            if (settings.provider === 'gemini' && !settings.geminiKey) {
+                setCompetitorLoading(false);
+                setShowCompetitorModal(false);
+                alert("Please configure your Gemini API Key in Settings first.");
+                return;
+            }
+
+            const report = await aiService.analyzeCompetitors(idea, settings);
+            setCompetitorReport(report);
+        } catch (e) {
+            console.error(e);
+            setCompetitorReport(`Error generating report: ${(e as Error).message}`);
+        } finally {
+            setCompetitorLoading(false);
+        }
+    };
+
     if (loading) return <div style={{ padding: '20px' }}>Loading...</div>;
     if (!idea) return <div style={{ padding: '20px' }}>Idea not found</div>;
 
@@ -192,6 +224,15 @@ export const Detail: React.FC = () => {
                         disabled={viabilityLoading}
                     >
                         <Search size={20} />
+                    </button>
+                    <button
+                        onClick={handleAnalyzeCompetitors}
+                        className="btn-icon"
+                        title="Competitor Analysis"
+                        style={{ color: '#ff3b30' }}
+                        disabled={competitorLoading}
+                    >
+                        <Swords size={20} />
                     </button>
                     <button
                         onClick={() => setShowOpenCodeModal(true)}
@@ -294,6 +335,14 @@ export const Detail: React.FC = () => {
                 onClose={() => setShowViabilityModal(false)}
             />
 
+            <CompetitorAnalysisModal
+                isOpen={showCompetitorModal}
+                loading={competitorLoading}
+                ideaTitle={idea.title}
+                report={competitorReport}
+                onClose={() => setShowCompetitorModal(false)}
+            />
+
             {/* Floating indicator for background report generation */}
             {!showViabilityModal && (viabilityLoading || viabilityReport) && (
                 <div
@@ -335,6 +384,51 @@ export const Detail: React.FC = () => {
                     ) : (
                         <>
                             ✓ Report ready! Click to view
+                        </>
+                    )}
+                </div>
+            )}
+            {/* Floating indicator for competitor analysis */}
+            {!showCompetitorModal && (competitorLoading || competitorReport) && (
+                <div
+                    onClick={() => setShowCompetitorModal(true)}
+                    style={{
+                        position: 'fixed',
+                        bottom: '24px',
+                        right: (viabilityLoading || viabilityReport) ? '280px' : '24px', // Shift left if viability is also active
+                        backgroundColor: competitorLoading ? '#ff3b30' : 'var(--color-success)',
+                        color: 'white',
+                        padding: '12px 20px',
+                        borderRadius: '12px',
+                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontSize: '0.9rem',
+                        fontWeight: '500',
+                        zIndex: 999,
+                        transition: 'all 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                    {competitorLoading ? (
+                        <>
+                            <div style={{
+                                width: '16px',
+                                height: '16px',
+                                border: '2px solid rgba(255,255,255,0.3)',
+                                borderTopColor: 'white',
+                                borderRadius: '50%',
+                                animation: 'spin 1s linear infinite'
+                            }} />
+                            Analyzing competitors...
+                            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                        </>
+                    ) : (
+                        <>
+                            ✓ Competitor report ready!
                         </>
                     )}
                 </div>

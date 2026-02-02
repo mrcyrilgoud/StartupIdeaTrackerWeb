@@ -238,5 +238,46 @@ Be specific, cite examples of real competitors when possible, and provide action
 
         // Use thinking model for deeper analysis
         return this.generateResponse(prompt, settings, true, false);
+    },
+
+    async analyzeCompetitors(idea: Idea, settings: AppSettings): Promise<string> {
+        const prompt = `
+You are a strategic business consultant specializing in competitive intelligence. Your task is to perform a deep-dive competitor analysis for the following startup idea.
+
+**Idea Title:** ${idea.title}
+**Idea Details:** ${idea.details}
+
+Generate a comprehensive Competitor Analysis Report in Markdown format. Be specific, naming real companies where possible, or describing exact categories of existing solutions.
+
+# Competitor Analysis: ${idea.title}
+
+## Market Landscape Overview
+Briefly describe the current state of the market this idea is entering (e.g., "Fragmented," "Winner-take-all," "Emerging," "Saturated").
+
+## Direct Competitors
+Identify 3-5 existing companies or products that solve the exact same problem for the same customer. For each:
+- **Name:** (Real company name if known, or "Generic [Solution Type]")
+- **Strengths:** What they do well.
+- **Weaknesses:** Where they fall short.
+- **Threat Level:** (High/Medium/Low)
+
+## Indirect Competitors
+Identify alternative ways users currently solve this problem (e.g., spreadsheets, manual processes, hiring a human, hacking together other tools).
+
+## SWOT Analysis (Relative to Competitors)
+- **Strengths:** What unique advantages does this idea have?
+- **Weaknesses:** Where is it vulnerable?
+- **Opportunities:** What market gaps are competitors missing?
+- **Threats:** What external factors or competitor moves could kill this idea?
+
+## Differentiation Strategy
+Propose specific "Blue Ocean" moves or features that would make the competition irrelevant. How can this idea distinguish itself immediately?
+
+## Final Strategic Recommendation
+A concluding paragraph on the best path to enter the market.
+`;
+
+        // Use thinking model for deeper analysis
+        return this.generateResponse(prompt, settings, true, false);
     }
 };
