@@ -7,6 +7,7 @@ interface CompetitorAnalysisModalProps {
     loading: boolean;
     ideaTitle: string;
     report: string;
+    error?: string | null;
     onClose: () => void;
 }
 
@@ -50,6 +51,7 @@ export const CompetitorAnalysisModal: React.FC<CompetitorAnalysisModalProps> = (
     loading,
     ideaTitle,
     report,
+    error,
     onClose
 }) => {
     if (!isOpen) return null;
@@ -184,17 +186,31 @@ export const CompetitorAnalysisModal: React.FC<CompetitorAnalysisModalProps> = (
                                 💡 You can close this and continue browsing. The report will be ready when you return!
                             </p>
                         </div>
+                    ) : error ? (
+                        <div className="flex flex-col items-center justify-center py-16 px-5 text-center">
+                            <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center mb-4">
+                                <span className="text-2xl">⚠️</span>
+                            </div>
+                            <h3 className="text-xl font-bold text-text-primary mb-2">Analysis Failed</h3>
+                            <p className="text-text-secondary max-w-md mb-6">{error}</p>
+                            <button
+                                onClick={() => window.location.href = '/settings'}
+                                className="btn-primary bg-accent hover:bg-accent/90"
+                            >
+                                Go to Settings
+                            </button>
+                        </div>
                     ) : (
                         <div className="markdown-body leading-relaxed text-[0.95rem] text-text-primary">
                             <ReactMarkdown
                                 components={{
-                                    h1: ({node, ...props}) => <h1 className="text-text-primary border-b border-border pb-2.5 mt-6 text-2xl" {...props} />,
-                                    h2: ({node, ...props}) => <h2 className="text-text-primary mt-5 mb-2.5 text-xl" {...props} />,
-                                    h3: ({node, ...props}) => <h3 className="text-text-secondary mt-4 mb-2 text-lg" {...props} />,
-                                    ul: ({node, ...props}) => <ul className="pl-5" {...props} />,
-                                    li: ({node, ...props}) => <li className="mb-1.5" {...props} />,
-                                    strong: ({node, ...props}) => <strong className="text-text-primary font-semibold" {...props} />,
-                                    p: ({node, ...props}) => <p className="mb-4" {...props} />
+                                    h1: ({ node, ...props }) => <h1 className="text-text-primary border-b border-border pb-2.5 mt-6 text-2xl" {...props} />,
+                                    h2: ({ node, ...props }) => <h2 className="text-text-primary mt-5 mb-2.5 text-xl" {...props} />,
+                                    h3: ({ node, ...props }) => <h3 className="text-text-secondary mt-4 mb-2 text-lg" {...props} />,
+                                    ul: ({ node, ...props }) => <ul className="pl-5" {...props} />,
+                                    li: ({ node, ...props }) => <li className="mb-1.5" {...props} />,
+                                    strong: ({ node, ...props }) => <strong className="text-text-primary font-semibold" {...props} />,
+                                    p: ({ node, ...props }) => <p className="mb-4" {...props} />
                                 }}
                             >
                                 {report}

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { dbService } from '../services/db';
 import { aiService } from '../services/ai';
-import { Idea, AppSettings, ChatMessage } from '../types';
+import { Idea, AppSettings, ChatMessage, STATUS_LABELS, STATUS_COLORS } from '../types';
 import { Chat } from '../components/features/Chat';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OpenCodeModal } from '../components/OpenCodeModal';
@@ -20,11 +20,13 @@ export const Detail: React.FC = () => {
     // Viability analysis state
     const [viabilityLoading, setViabilityLoading] = useState(false);
     const [viabilityReport, setViabilityReport] = useState('');
+    const [viabilityError, setViabilityError] = useState<string | null>(null);
     const [showViabilityModal, setShowViabilityModal] = useState(false);
 
     // Competitor analysis state
     const [competitorLoading, setCompetitorLoading] = useState(false);
     const [competitorReport, setCompetitorReport] = useState('');
+    const [competitorError, setCompetitorError] = useState<string | null>(null);
     const [showCompetitorModal, setShowCompetitorModal] = useState(false);
 
     // Ref to track the latest idea state for debounced saving
@@ -146,19 +148,28 @@ export const Detail: React.FC = () => {
         });
     }, []);
 
+    const handleStatusChange = (newStatus: any) => {
+        setIdea(prev => {
+            if (!prev) return null;
+            const updated = { ...prev, status: newStatus };
+            dbService.saveIdea(updated);
+            return updated;
+        });
+    };
+
     // Handler for viability analysis
     const handleAnalyzeViability = async () => {
         if (!idea || !settings) return;
 
         try {
             setViabilityReport('');
+            setViabilityError(null);
             setShowViabilityModal(true);
             setViabilityLoading(true);
 
             if (settings.provider === 'gemini' && !settings.geminiKey) {
                 setViabilityLoading(false);
-                setShowViabilityModal(false);
-                alert("Please configure your Gemini API Key in Settings first.");
+                setViabilityError("Please configure your Gemini API Key in Settings first.");
                 return;
             }
 
@@ -166,7 +177,7 @@ export const Detail: React.FC = () => {
             setViabilityReport(report);
         } catch (e) {
             console.error(e);
-            setViabilityReport(`Error generating report: ${(e as Error).message}`);
+            setViabilityError(`Error generating report: ${(e as Error).message}`);
         } finally {
             setViabilityLoading(false);
         }
@@ -178,13 +189,13 @@ export const Detail: React.FC = () => {
 
         try {
             setCompetitorReport('');
+            setCompetitorError(null);
             setShowCompetitorModal(true);
             setCompetitorLoading(true);
 
             if (settings.provider === 'gemini' && !settings.geminiKey) {
                 setCompetitorLoading(false);
-                setShowCompetitorModal(false);
-                alert("Please configure your Gemini API Key in Settings first.");
+                setCompetitorError("Please configure your Gemini API Key in Settings first.");
                 return;
             }
 
@@ -192,7 +203,7 @@ export const Detail: React.FC = () => {
             setCompetitorReport(report);
         } catch (e) {
             console.error(e);
-            setCompetitorReport(`Error generating report: ${(e as Error).message}`);
+            setCompetitorError(`Error generating report: ${(e as Error).message}`);
         } finally {
             setCompetitorLoading(false);
         }
@@ -210,7 +221,30 @@ export const Detail: React.FC = () => {
                 >
                     <ArrowLeft size={20} /> Back
                 </button>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                    <div className="relative mr-2">
+                        <select
+                            value={idea.status || 'draft'}
+                            onChange={(e) => handleStatusChange(e.target.value)}
+                            className="appearance-none pl-3 pr-8 py-1.5 rounded-2xl text-sm font-semibold cursor-pointer outline-none text-center"
+                            style={{
+                                backgroundColor: STATUS_COLORS[idea.status || 'draft'] + '20',
+                                color: STATUS_COLORS[idea.status || 'draft'],
+                                border: `1px solid ${STATUS_COLORS[idea.status || 'draft']}`
+                            }}
+                        >
+                            {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                                <option key={key} value={key} style={{ color: 'black' }}>
+                                    {label}
+                                </option>
+                            ))}
+                        </select>
+                        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: STATUS_COLORS[idea.status || 'draft'] }}>
+                            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor">
+                                <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                            </svg>
+                        </div>
+                    </div>
                     <button
                         onClick={handleAnalyzeViability}
                         className="btn-icon text-accent"
@@ -285,10 +319,45 @@ export const Detail: React.FC = () => {
                                 <Sparkles size={12} /> {extracting ? 'Extracting...' : 'Extract'}
                             </button>
                         </div>
+                        <div className="flex gap-2 mb-3">
+                            <input
+                                className="bg-background border border-border rounded-lg px-2 py-1 text-sm flex-1 outline-none focus:border-accent"
+                                placeholder="Add keyword..."
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        const val = (e.target as HTMLInputElement).value.trim();
+                                        if (val) {
+                                            setIdea(prev => {
+                                                if (!prev) return null;
+                                                const newKw = [...prev.keywords, val];
+                                                const updated = { ...prev, keywords: newKw };
+                                                dbService.saveIdea(updated);
+                                                return updated;
+                                            });
+                                            (e.target as HTMLInputElement).value = '';
+                                        }
+                                    }
+                                }}
+                            />
+                        </div>
                         <div className="flex gap-2 flex-wrap">
                             {idea.keywords.map((kw, idx) => (
-                                <span key={idx} className="text-xs bg-background px-3 py-1 rounded-2xl">
+                                <span key={idx} className="text-xs bg-background px-3 py-1 rounded-2xl flex items-center gap-1 group">
                                     {kw}
+                                    <button
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-text-secondary hover:text-danger"
+                                        onClick={() => {
+                                            setIdea(prev => {
+                                                if (!prev) return null;
+                                                const newKw = prev.keywords.filter((_, i) => i !== idx);
+                                                const updated = { ...prev, keywords: newKw };
+                                                dbService.saveIdea(updated);
+                                                return updated;
+                                            });
+                                        }}
+                                    >
+                                        &times;
+                                    </button>
                                 </span>
                             ))}
                             {idea.keywords.length === 0 && <span className="text-text-secondary text-xs">No keywords extracted yet.</span>}
@@ -307,6 +376,7 @@ export const Detail: React.FC = () => {
                 loading={viabilityLoading}
                 ideaTitle={idea.title}
                 report={viabilityReport}
+                error={viabilityError}
                 onClose={() => setShowViabilityModal(false)}
             />
 
@@ -315,6 +385,7 @@ export const Detail: React.FC = () => {
                 loading={competitorLoading}
                 ideaTitle={idea.title}
                 report={competitorReport}
+                error={competitorError}
                 onClose={() => setShowCompetitorModal(false)}
             />
 
@@ -342,7 +413,7 @@ export const Detail: React.FC = () => {
                     onClick={() => setShowCompetitorModal(true)}
                     className={`fixed bottom-6 text-white px-5 py-3 rounded-xl shadow-lg cursor-pointer flex items-center gap-2.5 text-sm font-medium z-[999] transition-all duration-200 hover:scale-105 ${competitorLoading ? 'bg-[#ff3b30]' : 'bg-success'}`}
                     style={{
-                         right: (viabilityLoading || viabilityReport) ? '280px' : '24px',
+                        right: (viabilityLoading || viabilityReport) ? '280px' : '24px',
                     }}
                 >
                     {competitorLoading ? (

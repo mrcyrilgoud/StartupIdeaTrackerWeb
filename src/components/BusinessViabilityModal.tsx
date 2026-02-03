@@ -7,6 +7,7 @@ interface BusinessViabilityModalProps {
     loading: boolean;
     ideaTitle: string;
     report: string;
+    error?: string | null;
     onClose: () => void;
 }
 
@@ -50,6 +51,7 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
     loading,
     ideaTitle,
     report,
+    error,
     onClose
 }) => {
     if (!isOpen) return null;
@@ -178,6 +180,20 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                             <p className="mt-4 text-xs text-accent bg-[#5856d61a] px-4 py-2 rounded-lg">
                                 💡 You can close this and continue browsing. The report will be ready when you return!
                             </p>
+                        </div>
+                    ) : error ? (
+                        <div className="flex flex-col items-center justify-center py-16 px-5 text-center">
+                            <div className="w-16 h-16 bg-danger/10 text-danger rounded-full flex items-center justify-center mb-4">
+                                <span className="text-2xl">⚠️</span>
+                            </div>
+                            <h3 className="text-xl font-bold text-text-primary mb-2">Analysis Failed</h3>
+                            <p className="text-text-secondary max-w-md mb-6">{error}</p>
+                            <button
+                                onClick={() => window.location.href = '/settings'}
+                                className="btn-primary bg-accent hover:bg-accent/90"
+                            >
+                                Go to Settings
+                            </button>
                         </div>
                     ) : (
                         <div className="markdown-body leading-relaxed text-[0.95rem] text-text-primary">

@@ -63,7 +63,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     }, [idea.chatHistory]);
 
     const sendMessage = async () => {
-        if (!input.trim() || !settings) return;
+        if (!input.trim()) return;
 
         const userMsg: ChatMessage = {
             id: uuidv4(),
@@ -75,8 +75,18 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         // Optimistic update
         const historyWithUser = [...idea.chatHistory, userMsg];
         onChatUpdate(historyWithUser);
-
         setInput('');
+
+        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
+            const errorMsg: ChatMessage = {
+                id: uuidv4(),
+                role: 'system',
+                content: "Please configure your API Key in Settings to use the AI Assistant.",
+                timestamp: Date.now()
+            };
+            onChatUpdate([...historyWithUser, errorMsg]);
+            return;
+        }
         setLoading(true);
 
         try {
@@ -135,7 +145,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     };
 
     const sendQuickPrompt = async (promptText: string) => {
-        if (!settings || loading) return;
+        if (loading) return;
 
         const userMsg: ChatMessage = {
             id: uuidv4(),
@@ -146,6 +156,18 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
 
         const historyWithUser = [...idea.chatHistory, userMsg];
         onChatUpdate(historyWithUser);
+
+        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
+            const errorMsg: ChatMessage = {
+                id: uuidv4(),
+                role: 'system',
+                content: "Please configure your API Key in Settings to use the AI Assistant.",
+                timestamp: Date.now()
+            };
+            onChatUpdate([...historyWithUser, errorMsg]);
+            return;
+        }
+
         setLoading(true);
 
         try {
@@ -171,7 +193,16 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     };
 
     const generatePlan = async () => {
-        if (!settings) return;
+        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
+            const errorMsg: ChatMessage = {
+                id: uuidv4(),
+                role: 'system',
+                content: "Please configure your API Key in Settings to use the AI Assistant.",
+                timestamp: Date.now()
+            };
+            onChatUpdate([...idea.chatHistory, errorMsg]);
+            return;
+        }
         setLoading(true);
         try {
             const plan = await aiService.generateResponse(`
@@ -284,11 +315,10 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                 {idea.chatHistory.map(msg => (
                     <div key={msg.id}
-                         className={`max-w-[80%] px-3 py-2 rounded-xl ${
-                             msg.role === 'user'
-                                 ? 'self-end bg-accent text-white'
-                                 : 'self-start bg-background text-text-primary'
-                         }`}
+                        className={`max-w-[80%] px-3 py-2 rounded-xl ${msg.role === 'user'
+                            ? 'self-end bg-accent text-white'
+                            : 'self-start bg-background text-text-primary'
+                            }`}
                     >
                         {msg.role !== 'user' && (
                             <div className="flex justify-between items-center mb-1">

@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Search, Trash2, ArrowRight } from 'lucide-react';
+import { Plus, Sparkles, Search, Trash2 } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, MVPAnalysisResult } from '../services/ai';
-import { Idea } from '../types';
+import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { MVPResultModal } from '../components/MVPResultModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
@@ -19,12 +19,18 @@ export const Home: React.FC = () => {
     // Viability analysis state
     const [viabilityLoading, setViabilityLoading] = useState(false);
     const [viabilityReport, setViabilityReport] = useState('');
+    const [viabilityError, setViabilityError] = useState<string | null>(null);
     const [viabilityIdeaTitle, setViabilityIdeaTitle] = useState('');
     const [showViabilityModal, setShowViabilityModal] = useState(false);
 
     // Delete confirmation state
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [ideaToDelete, setIdeaToDelete] = useState<Idea | null>(null);
+
+    // Filter & Search State
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState<IdeaStatus | 'all'>('all');
+    const [sortOption, setSortOption] = useState<'newest' | 'oldest' | 'az'>('newest');
 
     const navigate = useNavigate();
 
@@ -36,7 +42,12 @@ export const Home: React.FC = () => {
         try {
             setError(null);
             const loaded = await dbService.getAllIdeas();
-            setIdeas(loaded.sort((a, b) => b.timestamp - a.timestamp)); // Newest first
+            // Ensure status exists for backward compatibility
+            const cleaned = loaded.map(i => ({
+                ...i,
+                status: i.status || 'draft'
+            }));
+            setIdeas(cleaned);
         } catch (e) {
             setError("Could not connect to the database. Make sure 'npm run dev' is running.");
         }
@@ -50,7 +61,8 @@ export const Home: React.FC = () => {
             timestamp: Date.now(),
             keywords: [],
             chatHistory: [],
-            relatedIdeaIds: []
+            relatedIdeaIds: [],
+            status: 'draft'
         };
         // Don't save immediately - wait for user input
         // navigate(`/idea/${newIdea.id}`);
@@ -65,6 +77,7 @@ export const Home: React.FC = () => {
         try {
             setViabilityIdeaTitle(idea.title);
             setViabilityReport('');
+            setViabilityError(null);
             setShowViabilityModal(true);
             setViabilityLoading(true);
 
@@ -72,8 +85,7 @@ export const Home: React.FC = () => {
 
             if (settings.provider === 'gemini' && !settings.geminiKey) {
                 setViabilityLoading(false);
-                setShowViabilityModal(false);
-                alert("Please configure your Gemini API Key in Settings first.");
+                setViabilityError("Please configure your Gemini API Key in Settings first.");
                 return;
             }
 
@@ -81,7 +93,7 @@ export const Home: React.FC = () => {
             setViabilityReport(report);
         } catch (e) {
             console.error(e);
-            setViabilityReport(`Error generating report: ${(e as Error).message}`);
+            setViabilityError(`Error generating report: ${(e as Error).message}`);
         } finally {
             setViabilityLoading(false);
         }
@@ -143,6 +155,20 @@ export const Home: React.FC = () => {
         return idea ? idea.title : "Unknown Idea";
     };
 
+    // Filter and Sort Logic
+    const filteredIdeas = ideas
+        .filter(idea => {
+            const matchesSearch = (idea.title + idea.details + idea.keywords.join(' ')).toLowerCase().includes(searchQuery.toLowerCase());
+            const matchesStatus = statusFilter === 'all' || idea.status === statusFilter;
+            return matchesSearch && matchesStatus;
+        })
+        .sort((a, b) => {
+            if (sortOption === 'newest') return b.timestamp - a.timestamp;
+            if (sortOption === 'oldest') return a.timestamp - b.timestamp;
+            if (sortOption === 'az') return a.title.localeCompare(b.title);
+            return 0;
+        });
+
     return (
         <div className="max-w-6xl mx-auto w-full pb-20">
             {/* Hero Section */}
@@ -171,6 +197,44 @@ export const Home: React.FC = () => {
                 </div>
             </div>
 
+            {/* Controls Bar */}
+            <div className="card mb-6 p-3 flex gap-4 flex-wrap items-center">
+                <div className="flex-1 min-w-[200px] flex items-center border border-border rounded-lg px-3 bg-background">
+                    <Search size={18} className="text-text-secondary" />
+                    <input
+                        className="input border-none bg-transparent shadow-none"
+                        placeholder="Search ideas..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value as any)}
+                        className="input w-auto cursor-pointer"
+                    >
+                        <option value="all">All Statuses</option>
+                        {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                            <option key={key} value={key}>{label}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <select
+                        value={sortOption}
+                        onChange={(e) => setSortOption(e.target.value as any)}
+                        className="input w-auto cursor-pointer"
+                    >
+                        <option value="newest">Newest First</option>
+                        <option value="oldest">Oldest First</option>
+                        <option value="az">A-Z</option>
+                    </select>
+                </div>
+            </div>
+
             {error && (
                 <div className="p-4 mb-6 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-2xl border border-red-200 dark:border-red-800 flex items-center gap-3">
                     <div className="p-2 bg-red-200 dark:bg-red-800 rounded-full">!</div>
@@ -178,35 +242,52 @@ export const Home: React.FC = () => {
                 </div>
             )}
 
-            {ideas.length === 0 && !error ? (
+            {filteredIdeas.length === 0 && !error ? (
                 <div className="text-center p-16 border-2 border-dashed border-border rounded-3xl bg-surface/50">
                     <div className="w-16 h-16 bg-accent/10 text-accent rounded-2xl flex items-center justify-center mx-auto mb-4">
                         <Plus size={32} />
                     </div>
-                    <h3 className="text-xl font-bold mb-2">No ideas yet?</h3>
+                    <h3 className="text-xl font-bold mb-2">
+                        {ideas.length === 0 ? "No ideas yet?" : "No matching ideas"}
+                    </h3>
                     <p className="text-text-secondary mb-6 max-w-md mx-auto">
-                        Every great startup begins with a simple note. Click the "New Idea" button to plant your first seed.
+                        {ideas.length === 0
+                            ? "Every great startup begins with a simple note. Click the \"New Idea\" button to plant your first seed."
+                            : "Try adjusting your search or filters to find what you're looking for."}
                     </p>
-                    <button className="btn-primary" onClick={createNewIdea}>
-                        Create First Idea
-                    </button>
+                    {ideas.length === 0 && (
+                        <button className="btn-primary" onClick={createNewIdea}>
+                            Create First Idea
+                        </button>
+                    )}
                 </div>
             ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full">
-                    {ideas.map(idea => (
+                    {filteredIdeas.map(idea => (
                         <div
                             key={idea.id}
-                            className="card group relative flex flex-col h-full cursor-pointer overflow-hidden border-t-4 border-t-transparent hover:border-t-accent"
+                            className="card group relative flex flex-col h-full cursor-pointer overflow-hidden border-t-4 border-t-transparent hover:border-t-accent transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
                             onClick={(e) => {
                                 if ((e.target as HTMLElement).closest('button')) return;
                                 navigate(`/idea/${idea.id}`);
                             }}
                         >
-                            <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <ArrowRight size={20} className="text-accent" />
+                            <div className="flex justify-between items-start mb-3">
+                                <h3 className="m-0 text-lg font-bold pr-2 text-text-primary leading-tight">{idea.title}</h3>
+                                {idea.status && (
+                                    <span
+                                        className="text-[10px] uppercase font-bold px-2 py-1 rounded-full whitespace-nowrap"
+                                        style={{
+                                            backgroundColor: `${STATUS_COLORS[idea.status]}20`,
+                                            color: STATUS_COLORS[idea.status],
+                                            border: `1px solid ${STATUS_COLORS[idea.status]}40`
+                                        }}
+                                    >
+                                        {STATUS_LABELS[idea.status]}
+                                    </span>
+                                )}
                             </div>
 
-                            <h3 className="m-0 mb-3 text-lg font-bold pr-8 text-text-primary leading-tight">{idea.title}</h3>
                             <p className="flex-1 text-text-secondary line-clamp-3 overflow-hidden text-sm leading-relaxed mb-4">
                                 {idea.details || 'No details provided...'}
                             </p>
@@ -252,6 +333,7 @@ export const Home: React.FC = () => {
                 loading={viabilityLoading}
                 ideaTitle={viabilityIdeaTitle}
                 report={viabilityReport}
+                error={viabilityError}
                 onClose={() => setShowViabilityModal(false)}
             />
 
