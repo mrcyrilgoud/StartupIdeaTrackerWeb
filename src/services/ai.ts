@@ -279,5 +279,70 @@ A concluding paragraph on the best path to enter the market.
 
         // Use thinking model for deeper analysis
         return this.generateResponse(prompt, settings, true, false);
+    },
+
+    async brainstorm(prompt: string, history: ChatMessage[], settings: AppSettings): Promise<string> {
+        const historyTranscript = history.map(msg =>
+            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        ).join('\n');
+
+        const fullContext = `
+      You are a creative and helpful startup co-founder. You are having a casual brainstorming session with the user to come up with new startup ideas or refine loose thoughts.
+
+      Goals:
+      1. Encourage creativity.
+      2. Ask probing questions to help define the problem and solution.
+      3. Suggest interesting angles or pivots.
+      4. Be concise and conversational.
+      
+      Previous conversation:
+      ${historyTranscript}
+      
+      User: ${prompt}
+      
+      Reply directly to the user's last message.
+      `;
+
+        return this.generateResponse(fullContext, settings, true);
+    },
+
+    async summarizeIdeaFromChat(history: ChatMessage[], settings: AppSettings): Promise<GeneratedIdea> {
+        const historyTranscript = history.map(msg =>
+            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        ).join('\n');
+
+        const prompt = `
+        Analyze the following brainstorming conversation and extract a concrete startup idea.
+        
+        Conversation:
+        ${historyTranscript}
+        
+        Strictly output the result as a valid JSON object with the following keys:
+        - "title": A catchy, concise title for the idea.
+        - "details": A comprehensive description of the idea, capturing the problem, solution, and key features discussed.
+        
+        Do NOT include any markdown formatting or code fences (like \`\`\`json). Return ONLY the raw JSON object.
+        `;
+
+        const responseText = await this.generateResponse(prompt, settings, true, true);
+
+        try {
+            const firstBrace = responseText.indexOf('{');
+            const lastBrace = responseText.lastIndexOf('}');
+
+            if (firstBrace === -1 || lastBrace === -1 || firstBrace > lastBrace) {
+                throw new Error("No JSON object found in response");
+            }
+
+            const jsonCandidate = responseText.substring(firstBrace, lastBrace + 1);
+            return JSON.parse(jsonCandidate);
+        } catch (e) {
+            console.error("Failed to parse AI response as JSON", responseText);
+            // Fallback
+            return {
+                title: "New Idea from Chat",
+                details: "Details could not be automatically generated. Please review the chat history."
+            };
+        }
     }
 };

@@ -7,6 +7,7 @@ import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { MVPResultModal } from '../components/MVPResultModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
+import { HomeChat } from '../components/features/HomeChat';
 import { ConfirmModal } from '../components/ConfirmModal';
 
 export const Home: React.FC = () => {
@@ -177,22 +178,29 @@ export const Home: React.FC = () => {
                     Your Idea Garden, <br />
                     Powered by AI.
                 </h2>
-                <p className="text-text-secondary text-lg max-w-2xl mx-auto">
+                <p className="text-text-secondary text-lg max-w-2xl mx-auto mb-8">
                     Capture, analyze, and refine your next big thing. Let AI handle the heavy lifting while you focus on the vision.
                 </p>
-                <div className="flex justify-center gap-4 mt-8">
+
+                <HomeChat />
+
+                <div className="flex justify-center gap-4 mt-8 opacity-80 hover:opacity-100 transition-opacity">
+                    <span className="text-sm text-text-secondary uppercase tracking-wider font-bold my-auto">Or</span>
                     <button
-                        className={`btn-primary flex items-center gap-2 ${(analyzingMVP || ideas.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer opacity-100'
+                        className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-accent/5 hover:border-accent hover:text-accent transition-all ${(analyzingMVP || ideas.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer opacity-100'
                             }`}
                         onClick={handleAnalyzeMVP}
                         disabled={analyzingMVP || ideas.length === 0}
                     >
-                        <Sparkles size={18} className={analyzingMVP ? "dot-animate" : ""} />
+                        <Sparkles size={16} className={analyzingMVP ? "dot-animate" : ""} />
                         {analyzingMVP ? 'Analyzing...' : 'Find Simplest MVP'}
                     </button>
-                    <button className="btn-primary bg-surface !bg-none !text-text-primary border border-border shadow-sm hover:bg-background" onClick={createNewIdea}>
-                        <Plus size={18} />
-                        New Idea
+                    <button
+                        className="text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-accent/5 hover:border-accent hover:text-accent transition-all"
+                        onClick={createNewIdea}
+                    >
+                        <Plus size={16} />
+                        New Empty Idea
                     </button>
                 </div>
             </div>
