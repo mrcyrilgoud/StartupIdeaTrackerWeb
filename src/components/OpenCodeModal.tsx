@@ -62,81 +62,34 @@ ${directoryInstructions}
     };
 
     return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 1000,
-            backdropFilter: 'blur(4px)'
-        }}>
-            <div className="card" style={{
-                maxWidth: '600px',
-                width: '90%',
-                maxHeight: '90vh',
-                display: 'flex',
-                flexDirection: 'column',
-                padding: '24px',
-                animation: 'slideIn 0.2s ease-out',
-                position: 'relative'
-            }}>
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-[1000] backdrop-blur-[4px]">
+            <div className="bg-surface rounded-2xl max-w-[600px] w-[90%] max-h-[90vh] flex flex-col p-6 animate-slideIn relative shadow-xl border border-border/50">
                 <button
                     onClick={onClose}
-                    style={{
-                        position: 'absolute',
-                        top: '16px',
-                        right: '16px',
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: 'var(--color-text-secondary)'
-                    }}
+                    className="absolute top-4 right-4 bg-transparent border-none cursor-pointer text-text-secondary"
                 >
                     <X size={20} />
                 </button>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                    <div style={{
-                        backgroundColor: 'rgba(0, 0, 0, 0.05)',
-                        padding: '10px',
-                        borderRadius: '50%',
-                        color: 'var(--color-text-primary)'
-                    }}>
+                <div className="flex items-center gap-3 mb-6">
+                    <div className="bg-black/5 p-2.5 rounded-full text-text-primary">
                         <Terminal size={24} />
                     </div>
                     <div>
-                        <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Build with OpenCode</h3>
-                        <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                        <h3 className="m-0 text-xl font-bold">Build with OpenCode</h3>
+                        <p className="m-0 mt-1 text-sm text-text-secondary">
                             Generate a prompt to kickstart your local MVP.
                         </p>
                     </div>
                 </div>
 
-                <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <label style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        fontSize: '0.9rem',
-                        fontWeight: 500,
-                        color: 'var(--color-text-primary)'
-                    }}>
+                <div className="mb-5 flex flex-col gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-text-primary">
                         <input
                             type="checkbox"
                             checked={includeDirectorySetup}
                             onChange={(e) => setIncludeDirectorySetup(e.target.checked)}
-                            style={{
-                                width: '18px',
-                                height: '18px',
-                                cursor: 'pointer',
-                                accentColor: 'var(--color-primary)'
-                            }}
+                            className="w-[18px] h-[18px] cursor-pointer accent-accent"
                         />
                         Include directory setup instructions
                     </label>
@@ -144,7 +97,7 @@ ${directoryInstructions}
                     {includeDirectorySetup && (
                         <>
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '4px', color: 'var(--color-text-secondary)' }}>
+                                <label className="block text-xs font-semibold mb-1 text-text-secondary">
                                     Project Name (Folder Name)
                                 </label>
                                 <input
@@ -156,19 +109,11 @@ ${directoryInstructions}
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '4px', color: 'var(--color-text-secondary)' }}>
+                                <label className="block text-xs font-semibold mb-1 text-text-secondary">
                                     Target Location (Parent Directory)
                                 </label>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <div style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        backgroundColor: 'var(--color-background)',
-                                        padding: '0 12px',
-                                        border: '1px solid var(--color-border)',
-                                        borderRadius: '8px',
-                                        color: 'var(--color-text-secondary)'
-                                    }}>
+                                <div className="flex gap-2">
+                                    <div className="flex items-center bg-background px-3 border border-border rounded-lg text-text-secondary">
                                         <FolderInput size={16} />
                                     </div>
                                     <input
@@ -178,7 +123,7 @@ ${directoryInstructions}
                                         placeholder="../ (Sibling directory)"
                                     />
                                 </div>
-                                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                                <p className="text-xs text-text-secondary mt-1">
                                     Use <code>../</code> for a sibling folder, or specify an absolute path like <code>/Users/name/repos/</code>
                                 </p>
                             </div>
@@ -186,54 +131,29 @@ ${directoryInstructions}
                     )}
                 </div>
 
-                <div style={{ position: 'relative', marginBottom: '24px', flex: 1, minHeight: '200px', display: 'flex', flexDirection: 'column' }}>
-                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '4px', color: 'var(--color-text-secondary)' }}>
+                <div className="relative mb-6 flex-1 min-h-[200px] flex flex-col">
+                    <label className="block text-xs font-semibold mb-1 text-text-secondary">
                         Generated Prompt
                     </label>
                     <textarea
                         readOnly
                         value={prompt}
-                        style={{
-                            flex: 1,
-                            width: '100%',
-                            padding: '16px',
-                            paddingRight: '48px', // Space for copy button
-                            borderRadius: '8px',
-                            border: '1px solid var(--color-border)',
-                            backgroundColor: 'var(--color-background)',
-                            color: 'var(--color-text-primary)',
-                            fontFamily: 'monospace',
-                            fontSize: '0.85rem',
-                            resize: 'none',
-                            outline: 'none',
-                            lineHeight: '1.5'
-                        }}
+                        className="flex-1 w-full p-4 pr-12 rounded-lg border border-border bg-background text-text-primary font-mono text-xs resize-none outline-none leading-relaxed"
                     />
                     <button
                         onClick={handleCopy}
                         title="Copy to clipboard"
-                        style={{
-                            position: 'absolute',
-                            top: '32px', // Adjusted for label
-                            right: '8px',
-                            padding: '8px',
-                            background: copied ? 'var(--color-success)' : 'var(--color-surface)',
-                            border: '1px solid var(--color-border)',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            color: copied ? 'white' : 'var(--color-text-primary)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transition: 'all 0.2s',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                        }}
+                        className={`absolute top-8 right-2 p-2 rounded-md border border-border cursor-pointer flex items-center justify-center transition-all shadow-sm
+                            ${copied
+                                ? 'bg-success text-white border-transparent'
+                                : 'bg-surface text-text-primary hover:bg-background'
+                            }`}
                     >
                         {copied ? <Check size={16} /> : <Copy size={16} />}
                     </button>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div className="flex justify-end">
                     <button
                         onClick={onClose}
                         className="btn-primary"

@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { dbService } from '../services/db';
 import { AppSettings } from '../types';
+import { useTheme } from '../context/ThemeContext';
+import { Sun, Moon, Monitor } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
+    const { theme, setTheme } = useTheme();
     const [settings, setSettings] = useState<AppSettings>({
         provider: 'gemini',
         geminiKey: '',
@@ -27,26 +30,61 @@ export const SettingsPage: React.FC = () => {
     };
 
     return (
-        <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '24px' }}>Settings</h2>
+        <div className="max-w-[600px] mx-auto">
+            <h2 className="text-2xl font-bold mb-6">Settings</h2>
 
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="card flex flex-col gap-4">
                 <div>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>AI Provider</label>
-                    <div className="flex-stack-mobile">
-                        <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <h3 className="text-xl mb-4 font-semibold">Appearance</h3>
+                    <div className="flex bg-background border border-border p-1 rounded-xl w-full sm:w-fit">
+                        <button
+                            onClick={() => setTheme('light')}
+                            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${theme === 'light'
+                                ? 'bg-white shadow-sm text-accent'
+                                : 'text-text-secondary hover:text-text-primary'
+                                }`}
+                        >
+                            <Sun size={18} /> Light
+                        </button>
+                        <button
+                            onClick={() => setTheme('dark')}
+                            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${theme === 'dark'
+                                ? 'bg-slate-700 shadow-sm text-white'
+                                : 'text-text-secondary hover:text-text-primary'
+                                }`}
+                        >
+                            <Moon size={18} /> Dark
+                        </button>
+                        <button
+                            onClick={() => setTheme('system')}
+                            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${theme === 'system'
+                                ? 'bg-white dark:bg-slate-700 shadow-sm text-accent'
+                                : 'text-text-secondary hover:text-text-primary'
+                                }`}
+                        >
+                            <Monitor size={18} /> System
+                        </button>
+                    </div>
+                </div>
+
+                <div className="pt-4 border-t border-border">
+                    <label className="block mb-2 font-medium">AI Provider</label>
+                    <div className="flex flex-col gap-4 sm:flex-row">
+                        <label className="flex gap-2 items-center cursor-pointer">
                             <input
                                 type="radio"
                                 checked={settings.provider === 'gemini'}
                                 onChange={() => handleChange('provider', 'gemini')}
+                                className="accent-accent"
                             />
                             Google Gemini
                         </label>
-                        <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <label className="flex gap-2 items-center cursor-pointer">
                             <input
                                 type="radio"
                                 checked={settings.provider === 'ollama'}
                                 onChange={() => handleChange('provider', 'ollama')}
+                                className="accent-accent"
                             />
                             Ollama (Local)
                         </label>
@@ -55,7 +93,7 @@ export const SettingsPage: React.FC = () => {
 
                 {settings.provider === 'gemini' ? (
                     <div>
-                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Gemini API Key</label>
+                        <label className="block mb-2 font-medium">Gemini API Key</label>
                         <input
                             className="input"
                             type="password"
@@ -67,7 +105,7 @@ export const SettingsPage: React.FC = () => {
                 ) : (
                     <>
                         <div>
-                            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Ollama Endpoint</label>
+                            <label className="block mb-2 font-medium">Ollama Endpoint</label>
                             <input
                                 className="input"
                                 type="text"
@@ -76,7 +114,7 @@ export const SettingsPage: React.FC = () => {
                             />
                         </div>
                         <div>
-                            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Model Name</label>
+                            <label className="block mb-2 font-medium">Model Name</label>
                             <input
                                 className="input"
                                 type="text"
@@ -87,9 +125,9 @@ export const SettingsPage: React.FC = () => {
                     </>
                 )}
 
-                <div style={{ paddingTop: '16px', borderTop: '1px solid var(--color-border)' }}>
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: '16px' }}>Data Management</h3>
-                    <div className="flex-stack-mobile">
+                <div className="pt-4 border-t border-border">
+                    <h3 className="text-xl mb-4 font-semibold">Data Management</h3>
+                    <div className="flex flex-col gap-4 sm:flex-row">
                         <button
                             className="btn-primary"
                             onClick={async () => {
@@ -105,12 +143,12 @@ export const SettingsPage: React.FC = () => {
                             Export Backup
                         </button>
 
-                        <label className="btn-primary" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <label className="btn-primary bg-surface border border-border text-text-primary hover:bg-background cursor-pointer flex items-center justify-center">
                             Import Backup
                             <input
                                 type="file"
                                 accept=".json"
-                                style={{ display: 'none' }}
+                                className="hidden"
                                 onChange={async (e) => {
                                     const file = e.target.files?.[0];
                                     if (file) {
@@ -129,7 +167,7 @@ export const SettingsPage: React.FC = () => {
                     </div>
                 </div>
 
-                <div style={{ paddingTop: '16px', borderTop: '1px solid var(--color-border)' }}>
+                <div className="pt-4 border-t border-border">
                     <button className="btn-primary" onClick={save}>
                         {saved ? 'Saved!' : 'Save Settings'}
                     </button>

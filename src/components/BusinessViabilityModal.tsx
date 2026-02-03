@@ -148,111 +148,48 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
     };
 
     return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 1000,
-            padding: '20px'
-        }}>
-            <div style={{
-                backgroundColor: 'var(--color-surface)',
-                borderRadius: '16px',
-                width: '100%',
-                maxWidth: '800px',
-                maxHeight: '90vh',
-                display: 'flex',
-                flexDirection: 'column',
-                boxShadow: '0 20px 60px rgba(0, 0, 0, 0.4)'
-            }}>
+        <div className="fixed inset-0 bg-black/70 flex justify-center items-center z-[1000] p-5">
+            <div className="bg-surface rounded-2xl w-full max-w-[800px] max-h-[90vh] flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.4)] animate-slideIn">
                 {/* Header */}
-                <div style={{
-                    padding: '20px 24px',
-                    borderBottom: '1px solid var(--color-border)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                }}>
+                <div className="p-6 border-b border-border flex justify-between items-center">
                     <div>
-                        <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Business Viability Report</h2>
-                        <p style={{ margin: '4px 0 0 0', color: 'var(--color-text-secondary)', fontSize: '0.9rem' }}>
+                        <h2 className="m-0 text-xl font-bold">Business Viability Report</h2>
+                        <p className="mt-1 text-text-secondary text-sm">
                             {ideaTitle}
                         </p>
                     </div>
                     <button
                         onClick={onClose}
-                        className="btn-icon"
-                        style={{ padding: '8px' }}
+                        className="btn-icon p-2"
                     >
                         <X size={20} />
                     </button>
                 </div>
 
                 {/* Content */}
-                <div style={{
-                    flex: 1,
-                    overflowY: 'auto',
-                    padding: '24px'
-                }}>
+                <div className="flex-1 overflow-y-auto p-6">
                     {loading ? (
-                        <div style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: '60px 20px',
-                            color: 'var(--color-text-secondary)'
-                        }}>
-                            <div style={{
-                                width: '48px',
-                                height: '48px',
-                                border: '3px solid var(--color-border)',
-                                borderTopColor: 'var(--color-accent)',
-                                borderRadius: '50%',
-                                animation: 'spin 1s linear infinite',
-                                marginBottom: '16px'
-                            }} />
-                            <p style={{ margin: 0, fontSize: '1rem' }}>Analyzing business viability...</p>
-                            <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', opacity: 0.7 }}>
+                        <div className="flex flex-col items-center justify-center py-16 px-5 text-text-secondary">
+                            <div className="w-12 h-12 border-[3px] border-border border-t-accent rounded-full animate-spin mb-4" />
+                            <p className="m-0 text-base">Analyzing business viability...</p>
+                            <p className="mt-2 text-sm opacity-70">
                                 This may take a moment for comprehensive analysis
                             </p>
-                            <p style={{
-                                margin: '16px 0 0 0',
-                                fontSize: '0.8rem',
-                                color: 'var(--color-accent)',
-                                backgroundColor: 'rgba(88, 86, 214, 0.1)',
-                                padding: '8px 16px',
-                                borderRadius: '8px'
-                            }}>
+                            <p className="mt-4 text-xs text-accent bg-[#5856d61a] px-4 py-2 rounded-lg">
                                 💡 You can close this and continue browsing. The report will be ready when you return!
                             </p>
-                            <style>{`
-                                @keyframes spin {
-                                    to { transform: rotate(360deg); }
-                                }
-                            `}</style>
                         </div>
                     ) : (
-                        <div className="markdown-body" style={{
-                            lineHeight: '1.7',
-                            fontSize: '0.95rem',
-                            color: 'var(--color-text-primary)'
-                        }}>
+                        <div className="markdown-body leading-relaxed text-[0.95rem] text-text-primary">
                             <ReactMarkdown
                                 components={{
-                                    h1: ({node, ...props}) => <h1 style={{ color: 'var(--color-text-primary)', borderBottom: '1px solid var(--color-border)', paddingBottom: '10px', marginTop: '24px', fontSize: '1.5em' }} {...props} />,
-                                    h2: ({node, ...props}) => <h2 style={{ color: 'var(--color-text-primary)', marginTop: '20px', marginBottom: '10px', fontSize: '1.3em' }} {...props} />,
-                                    h3: ({node, ...props}) => <h3 style={{ color: 'var(--color-text-secondary)', marginTop: '16px', marginBottom: '8px', fontSize: '1.1em' }} {...props} />,
-                                    ul: ({node, ...props}) => <ul style={{ paddingLeft: '20px' }} {...props} />,
-                                    li: ({node, ...props}) => <li style={{ marginBottom: '6px' }} {...props} />,
-                                    strong: ({node, ...props}) => <strong style={{ color: 'var(--color-text-primary)', fontWeight: '600' }} {...props} />,
-                                    p: ({node, ...props}) => <p style={{ marginBottom: '16px' }} {...props} />
+                                    h1: ({ node, ...props }) => <h1 className="text-text-primary border-b border-border pb-2.5 mt-6 text-2xl" {...props} />,
+                                    h2: ({ node, ...props }) => <h2 className="text-text-primary mt-5 mb-2.5 text-xl" {...props} />,
+                                    h3: ({ node, ...props }) => <h3 className="text-text-secondary mt-4 mb-2 text-lg" {...props} />,
+                                    ul: ({ node, ...props }) => <ul className="pl-5" {...props} />,
+                                    li: ({ node, ...props }) => <li className="mb-1.5" {...props} />,
+                                    strong: ({ node, ...props }) => <strong className="text-text-primary font-semibold" {...props} />,
+                                    p: ({ node, ...props }) => <p className="mb-4" {...props} />
                                 }}
                             >
                                 {report}
@@ -263,32 +200,22 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
 
                 {/* Footer with download buttons */}
                 {!loading && report && (
-                    <div style={{
-                        padding: '16px 24px',
-                        borderTop: '1px solid var(--color-border)',
-                        display: 'flex',
-                        gap: '12px',
-                        justifyContent: 'flex-end',
-                        flexWrap: 'wrap'
-                    }}>
+                    <div className="p-6 border-t border-border flex gap-3 justify-end flex-wrap">
                         <button
                             onClick={downloadAsPDF}
-                            className="btn-text"
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
+                            className="btn-text flex items-center gap-1.5 px-4 py-2"
                         >
                             <FileText size={16} /> Download PDF
                         </button>
                         <button
                             onClick={downloadAsMarkdown}
-                            className="btn-text"
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
+                            className="btn-text flex items-center gap-1.5 px-4 py-2"
                         >
                             <Download size={16} /> Download Markdown
                         </button>
                         <button
                             onClick={downloadAsHTML}
-                            className="btn-text"
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
+                            className="btn-text flex items-center gap-1.5 px-4 py-2"
                         >
                             <Code size={16} /> Download HTML
                         </button>

@@ -251,22 +251,20 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', border: '1px solid var(--color-border)', borderRadius: '12px', backgroundColor: 'var(--color-surface)' }}>
-            <div style={{ padding: '12px', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: '600', fontSize: '0.9rem' }}>AI Assistant</span>
-                <div style={{ display: 'flex', gap: '8px' }}>
+        <div className="flex flex-col h-full border border-border rounded-xl bg-surface">
+            <div className="p-3 border-b border-border flex justify-between items-center">
+                <span className="font-semibold text-sm">AI Assistant</span>
+                <div className="flex gap-2">
                     <button
                         onClick={downloadChatPDF}
-                        className="btn-text"
-                        style={{ fontSize: '0.8rem', padding: '4px 8px' }}
+                        className="btn-text text-xs px-2 py-1"
                         title="Download Chat as PDF"
                     >
                         <Download size={14} /> PDF
                     </button>
                     <button
                         onClick={handleUndo}
-                        className="btn-text"
-                        style={{ fontSize: '0.8rem', padding: '4px 8px' }}
+                        className="btn-text text-xs px-2 py-1"
                         title="Revert last turn"
                         disabled={idea.chatHistory.length === 0 || loading}
                     >
@@ -275,8 +273,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                     <button
                         onClick={generatePlan}
                         disabled={loading}
-                        className="btn-text"
-                        style={{ fontSize: '0.8rem', padding: '4px 8px' }}
+                        className="btn-text text-xs px-2 py-1"
                         title="Generate Implementation Plan"
                     >
                         <FileText size={14} /> Plan
@@ -284,30 +281,22 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                 {idea.chatHistory.map(msg => (
-                    <div key={msg.id} style={{
-                        alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                        maxWidth: '80%',
-                        backgroundColor: msg.role === 'user' ? 'var(--color-accent)' : 'var(--color-background)',
-                        color: msg.role === 'user' ? 'white' : 'var(--color-text-primary)',
-                        padding: '8px 12px',
-                        borderRadius: '12px',
-                    }}>
+                    <div key={msg.id}
+                         className={`max-w-[80%] px-3 py-2 rounded-xl ${
+                             msg.role === 'user'
+                                 ? 'self-end bg-accent text-white'
+                                 : 'self-start bg-background text-text-primary'
+                         }`}
+                    >
                         {msg.role !== 'user' && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                <div style={{ fontSize: '0.7rem', opacity: 0.7 }}>{msg.role === 'system' ? 'System' : 'AI'}</div>
+                            <div className="flex justify-between items-center mb-1">
+                                <div className="text-[0.7rem] opacity-70">{msg.role === 'system' ? 'System' : 'AI'}</div>
                                 {msg.role === 'assistant' && (
                                     <button
                                         onClick={() => onAppendToNote(msg.content)}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            padding: 0,
-                                            cursor: 'pointer',
-                                            color: 'inherit',
-                                            opacity: 0.6
-                                        }}
+                                        className="bg-transparent border-none p-0 cursor-pointer text-inherit opacity-60 hover:opacity-100"
                                         title="Save to Note"
                                     >
                                         <PlusCircle size={14} />
@@ -315,22 +304,11 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                                 )}
                             </div>
                         )}
-                        <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
                     </div>
                 ))}
                 {loading && (
-                    <div style={{
-                        alignSelf: 'flex-start',
-                        backgroundColor: 'var(--color-background)',
-                        color: 'var(--color-text-secondary)',
-                        padding: '8px 12px',
-                        borderRadius: '12px',
-                        fontSize: '0.9rem',
-                        opacity: 0.8,
-                        display: 'flex',
-                        gap: '4px',
-                        alignItems: 'center'
-                    }}>
+                    <div className="self-start bg-background text-text-secondary px-3 py-2 rounded-xl text-sm opacity-80 flex gap-1 items-center">
                         <span>Thinking</span>
                         <span className="dot-animate">.</span>
                         <span className="dot-animate" style={{ animationDelay: '0.2s' }}>.</span>
@@ -340,38 +318,18 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 <div ref={bottomRef} />
             </div>
 
-            <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <div className="p-2 px-3 border-t border-border flex gap-1.5 flex-wrap">
                 {QUICK_PROMPTS.map(qp => (
                     <button
                         key={qp.label}
                         onClick={() => sendQuickPrompt(qp.prompt)}
                         disabled={loading}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '4px 10px',
-                            fontSize: '0.75rem',
-                            borderRadius: '16px',
-                            border: '1px solid var(--color-border)',
-                            background: 'var(--color-background)',
-                            color: 'var(--color-text-secondary)',
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            opacity: loading ? 0.5 : 1,
-                            transition: 'all 0.15s ease'
-                        }}
-                        onMouseEnter={e => {
-                            if (!loading) {
-                                e.currentTarget.style.background = 'var(--color-accent)';
-                                e.currentTarget.style.color = 'white';
-                                e.currentTarget.style.borderColor = 'var(--color-accent)';
+                        className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-2xl border border-border bg-background text-text-secondary transition-all duration-150
+                            ${loading
+                                ? 'cursor-not-allowed opacity-50'
+                                : 'cursor-pointer hover:bg-accent hover:text-white hover:border-accent'
                             }
-                        }}
-                        onMouseLeave={e => {
-                            e.currentTarget.style.background = 'var(--color-background)';
-                            e.currentTarget.style.color = 'var(--color-text-secondary)';
-                            e.currentTarget.style.borderColor = 'var(--color-border)';
-                        }}
+                        `}
                     >
                         <qp.icon size={12} />
                         {qp.label}
@@ -379,7 +337,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 ))}
             </div>
 
-            <div style={{ padding: '12px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '8px' }}>
+            <div className="p-3 border-t border-border flex gap-2">
                 <input
                     className="input"
                     value={input}
@@ -389,10 +347,9 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                     disabled={loading}
                 />
                 <button
-                    className="btn-primary"
+                    className="btn-primary flex items-center justify-center px-3"
                     onClick={sendMessage}
                     disabled={loading || !input.trim()}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 12px' }}
                 >
                     {loading ? '...' : <Send size={18} />}
                 </button>

@@ -8,30 +8,51 @@ export const Layout: React.FC = () => {
     const isActive = (path: string) => location.pathname === path;
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-            <header style={{
-                padding: '16px',
-                borderBottom: '1px solid var(--color-border)',
-                backgroundColor: 'var(--color-surface)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-            }}>
-                <h1 style={{ margin: 0, fontSize: '1.2rem' }}>Startup Tracker</h1>
-                <nav style={{ display: 'flex', gap: '16px' }}>
-                    <Link to="/" style={{ color: isActive('/') ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
-                        <Lightbulb size={24} />
+        <div className="flex flex-col h-screen bg-background">
+            <header className="px-6 py-4 glass-panel flex justify-between items-center shadow-sm">
+                <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity" title="Back to Home">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-purple-600 flex items-center justify-center text-white shadow-lg shadow-accent/20">
+                        <Sparkles size={18} fill="currentColor" />
+                    </div>
+                    <h1 className="m-0 text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-text-primary to-text-secondary">
+                        Startup Tracker
+                    </h1>
+                </Link>
+                <nav className="flex gap-2 bg-background/50 p-1 rounded-2xl border border-border/50">
+                    <Link
+                        to="/"
+                        className={`p-2 rounded-xl transition-all duration-200 ${isActive('/')
+                            ? 'bg-white dark:bg-slate-700 text-accent shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
+                            }`}
+                        title="Home"
+                    >
+                        <Lightbulb size={20} className={isActive('/') ? "fill-current" : ""} />
                     </Link>
-                    <Link to="/generate" style={{ color: isActive('/generate') ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
-                        <Sparkles size={24} />
+                    <Link
+                        to="/generate"
+                        className={`p-2 rounded-xl transition-all duration-200 ${isActive('/generate')
+                            ? 'bg-white dark:bg-slate-700 text-accent shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
+                            }`}
+                        title="Generator"
+                    >
+                        <Sparkles size={20} className={isActive('/generate') ? "fill-current" : ""} />
                     </Link>
-                    <Link to="/settings" style={{ color: isActive('/settings') ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
-                        <Settings size={24} />
+                    <Link
+                        to="/settings"
+                        className={`p-2 rounded-xl transition-all duration-200 ${isActive('/settings')
+                            ? 'bg-white dark:bg-slate-700 text-accent shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
+                            }`}
+                        title="Settings"
+                    >
+                        <Settings size={20} className={isActive('/settings') ? "fill-current" : ""} />
                     </Link>
                 </nav>
             </header>
 
-            <main style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+            <main className="flex-1 overflow-auto p-4">
                 <Outlet />
             </main>
         </div>

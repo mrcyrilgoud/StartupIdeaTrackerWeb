@@ -18,50 +18,20 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
     if (!isOpen) return null;
 
     return (
-        <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 1000,
-            backdropFilter: 'blur(4px)'
-        }}>
-            <div className="card" style={{
-                maxWidth: '400px',
-                width: '90%',
-                padding: '24px',
-                animation: 'slideIn 0.2s ease-out'
-            }}>
-                <h3 style={{ marginTop: 0, marginBottom: '12px', fontSize: '1.25rem' }}>{title}</h3>
-                <p style={{ color: 'var(--color-text-secondary)', marginBottom: '24px' }}>{message}</p>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-[1000] backdrop-blur-[4px]">
+            <div className="card max-w-[400px] w-[90%] p-6 animate-slideIn">
+                <h3 className="mt-0 mb-3 text-xl font-bold">{title}</h3>
+                <p className="text-text-secondary mb-6">{message}</p>
+                <div className="flex justify-end gap-3">
                     <button
                         onClick={onCancel}
-                        style={{
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            border: '1px solid var(--color-border)',
-                            backgroundColor: 'transparent',
-                            color: 'var(--color-text-primary)',
-                            cursor: 'pointer',
-                            fontWeight: '500'
-                        }}
+                        className="py-2 px-4 rounded-lg border border-border bg-transparent text-text-primary cursor-pointer font-medium hover:bg-background transition-colors"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={onConfirm}
-                        className="btn-primary"
-                        style={{
-                            backgroundColor: '#FF3B30', // Destructive red
-                            color: 'white',
-                            border: 'none',
-                        }}
+                        className="btn-primary bg-[#FF3B30] hover:bg-[#D70015] border-none text-white"
                     >
                         Delete
                     </button>

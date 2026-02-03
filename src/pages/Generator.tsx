@@ -85,48 +85,38 @@ export const Generator: React.FC = () => {
     };
 
     return (
-        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', marginBottom: '16px' }}>Idea Generator</h2>
+        <div className="max-w-[800px] mx-auto">
+            <h2 className="text-2xl font-bold mb-4">Idea Generator</h2>
 
-            <div className="card" style={{ marginBottom: '24px' }}>
-                <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>
+            <div className="card mb-6">
+                <div className="flex gap-4 mb-4">
                     <button
                         onClick={() => setMode('standard')}
-                        style={{
-                            flex: 1,
-                            padding: '12px',
-                            borderRadius: '8px',
-                            border: mode === 'standard' ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-                            backgroundColor: mode === 'standard' ? 'rgba(88, 86, 214, 0.1)' : 'transparent',
-                            color: mode === 'standard' ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                            cursor: 'pointer',
-                            fontWeight: '600'
-                        }}
+                        className={`flex-1 p-3 rounded-lg font-semibold cursor-pointer transition-colors flex items-center justify-center
+                            ${mode === 'standard' 
+                                ? 'border-2 border-accent bg-[#5856d61a] text-accent' 
+                                : 'border border-border bg-transparent text-text-primary hover:bg-background'
+                            }`}
                     >
-                        <Sparkles size={20} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
+                        <Sparkles size={20} className="mr-2" />
                         New Ideas
                     </button>
                     <button
                         onClick={() => setMode('combination')}
-                        style={{
-                            flex: 1,
-                            padding: '12px',
-                            borderRadius: '8px',
-                            border: mode === 'combination' ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-                            backgroundColor: mode === 'combination' ? 'rgba(88, 86, 214, 0.1)' : 'transparent',
-                            color: mode === 'combination' ? 'var(--color-accent)' : 'var(--color-text-primary)',
-                            cursor: 'pointer',
-                            fontWeight: '600'
-                        }}
+                        className={`flex-1 p-3 rounded-lg font-semibold cursor-pointer transition-colors flex items-center justify-center
+                            ${mode === 'combination' 
+                                ? 'border-2 border-accent bg-[#5856d61a] text-accent' 
+                                : 'border border-border bg-transparent text-text-primary hover:bg-background'
+                            }`}
                     >
-                        <Layers size={20} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
+                        <Layers size={20} className="mr-2" />
                         Combine Existing
                     </button>
                 </div>
 
                 {mode === 'standard' && (
-                    <div style={{ marginBottom: '16px' }}>
-                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Topic / Keywords (Optional)</label>
+                    <div className="mb-4">
+                        <label className="block mb-2 font-medium">Topic / Keywords (Optional)</label>
                         <textarea
                             className="input"
                             rows={3}
@@ -138,10 +128,9 @@ export const Generator: React.FC = () => {
                 )}
 
                 <button
-                    className="btn-primary"
+                    className="btn-primary w-full flex justify-center items-center gap-2"
                     onClick={handleGenerate}
                     disabled={loading}
-                    style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}
                 >
                     {loading ? 'Thinking Deeply...' : 'Generate with AI'}
                     {!loading && <Sparkles size={18} />}
@@ -149,7 +138,7 @@ export const Generator: React.FC = () => {
             </div>
 
             {error && (
-                <div style={{ padding: '16px', backgroundColor: '#FF3B3020', color: '#FF3B30', borderRadius: '8px', marginBottom: '16px' }}>
+                <div className="p-4 bg-[#FF3B3020] text-[#FF3B30] rounded-lg mb-4">
                     {error}
                 </div>
             )}

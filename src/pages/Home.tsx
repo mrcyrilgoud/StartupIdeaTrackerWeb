@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Search, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, Search, Trash2, ArrowRight } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, MVPAnalysisResult } from '../services/ai';
 import { Idea } from '../types';
@@ -144,29 +144,27 @@ export const Home: React.FC = () => {
     };
 
     return (
-        <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>My Ideas</h2>
-                <div style={{ display: 'flex', gap: '12px' }}>
+        <div className="max-w-6xl mx-auto w-full pb-20">
+            {/* Hero Section */}
+            <div className="mb-10 text-center py-10">
+                <h2 className="text-4xl font-extrabold mb-3 bg-clip-text text-transparent bg-gradient-to-r from-accent via-purple-500 to-indigo-600">
+                    Your Idea Garden, <br />
+                    Powered by AI.
+                </h2>
+                <p className="text-text-secondary text-lg max-w-2xl mx-auto">
+                    Capture, analyze, and refine your next big thing. Let AI handle the heavy lifting while you focus on the vision.
+                </p>
+                <div className="flex justify-center gap-4 mt-8">
                     <button
-                        className="btn-primary"
+                        className={`btn-primary flex items-center gap-2 ${(analyzingMVP || ideas.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer opacity-100'
+                            }`}
                         onClick={handleAnalyzeMVP}
                         disabled={analyzingMVP || ideas.length === 0}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            backgroundColor: 'var(--color-surface)',
-                            color: 'var(--color-accent)',
-                            border: '1px solid var(--color-border)',
-                            cursor: (analyzingMVP || ideas.length === 0) ? 'not-allowed' : 'pointer',
-                            opacity: (analyzingMVP || ideas.length === 0) ? 0.6 : 1
-                        }}
                     >
                         <Sparkles size={18} className={analyzingMVP ? "dot-animate" : ""} />
-                        {analyzingMVP ? 'Analyzing...' : 'Analyze Simplest MVP'}
+                        {analyzingMVP ? 'Analyzing...' : 'Find Simplest MVP'}
                     </button>
-                    <button className="btn-primary" onClick={createNewIdea} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button className="btn-primary bg-surface !bg-none !text-text-primary border border-border shadow-sm hover:bg-background" onClick={createNewIdea}>
                         <Plus size={18} />
                         New Idea
                     </button>
@@ -174,123 +172,66 @@ export const Home: React.FC = () => {
             </div>
 
             {error && (
-                <div style={{
-                    padding: '16px',
-                    marginBottom: '24px',
-                    backgroundColor: '#fee2e2',
-                    color: '#dc2626',
-                    borderRadius: '8px',
-                    border: '1px solid #fecaca'
-                }}>
+                <div className="p-4 mb-6 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-2xl border border-red-200 dark:border-red-800 flex items-center gap-3">
+                    <div className="p-2 bg-red-200 dark:bg-red-800 rounded-full">!</div>
                     {error}
                 </div>
             )}
 
             {ideas.length === 0 && !error ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--color-text-secondary)' }}>
-                    <p>No ideas yet. Start by capturing a new one!</p>
+                <div className="text-center p-16 border-2 border-dashed border-border rounded-3xl bg-surface/50">
+                    <div className="w-16 h-16 bg-accent/10 text-accent rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <Plus size={32} />
+                    </div>
+                    <h3 className="text-xl font-bold mb-2">No ideas yet?</h3>
+                    <p className="text-text-secondary mb-6 max-w-md mx-auto">
+                        Every great startup begins with a simple note. Click the "New Idea" button to plant your first seed.
+                    </p>
+                    <button className="btn-primary" onClick={createNewIdea}>
+                        Create First Idea
+                    </button>
                 </div>
             ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px', width: '100%' }}>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full">
                     {ideas.map(idea => (
                         <div
                             key={idea.id}
-                            className="card"
+                            className="card group relative flex flex-col h-full cursor-pointer overflow-hidden border-t-4 border-t-transparent hover:border-t-accent"
                             onClick={(e) => {
-                                // Don't navigate if a button was clicked
                                 if ((e.target as HTMLElement).closest('button')) return;
                                 navigate(`/idea/${idea.id}`);
                             }}
-                            style={{
-                                height: '100%',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                border: '1px solid var(--color-border)',
-                                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08)',
-                                transition: 'box-shadow 0.2s ease, transform 0.2s ease',
-                                cursor: 'pointer'
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.12)';
-                                e.currentTarget.style.transform = 'translateY(-2px)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.08)';
-                                e.currentTarget.style.transform = 'translateY(0)';
-                            }}
                         >
-                            <h3 style={{ margin: '0 0 8px 0' }}>{idea.title}</h3>
-                            <p style={{
-                                flex: 1,
-                                color: 'var(--color-text-secondary)',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 3,
-                                WebkitBoxOrient: 'vertical',
-                                overflow: 'hidden'
-                            }}>
+                            <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <ArrowRight size={20} className="text-accent" />
+                            </div>
+
+                            <h3 className="m-0 mb-3 text-lg font-bold pr-8 text-text-primary leading-tight">{idea.title}</h3>
+                            <p className="flex-1 text-text-secondary line-clamp-3 overflow-hidden text-sm leading-relaxed mb-4">
                                 {idea.details || 'No details provided...'}
                             </p>
-                            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+
+                            <div className="flex flex-wrap gap-2 mb-4">
                                 {idea.keywords.slice(0, 3).map((kw, idx) => (
-                                    <span key={idx} style={{
-                                        fontSize: '0.75rem',
-                                        backgroundColor: 'rgba(88, 86, 214, 0.1)',
-                                        color: 'var(--color-accent)',
-                                        padding: '2px 8px',
-                                        borderRadius: '12px'
-                                    }}>
+                                    <span key={idx} className="text-[10px] font-bold uppercase tracking-wider bg-accent/5 text-accent px-2 py-1 rounded-md border border-accent/10">
                                         {kw}
                                     </span>
                                 ))}
                             </div>
-                            <div onClick={(e) => e.stopPropagation()}>
+
+                            <div className="mt-auto pt-4 border-t border-border/50 flex gap-2" onClick={(e) => e.stopPropagation()}>
                                 <button
                                     onClick={(e) => handleAnalyzeViability(e, idea)}
-                                    className="btn-text"
-                                    style={{
-                                        marginTop: '12px',
-                                        fontSize: '0.8rem',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        padding: '6px 12px',
-                                        width: '100%',
-                                        justifyContent: 'center',
-                                        border: '1px solid var(--color-border)',
-                                        borderRadius: '8px',
-                                        transition: 'all 0.2s ease'
-                                    }}
+                                    className="flex-1 btn-text text-xs justify-center bg-background hover:bg-accent hover:text-white border border-border/50"
                                 >
-                                    <Search size={14} /> Examine Viability
+                                    <Search size={14} /> Viability
                                 </button>
                                 <button
                                     onClick={(e) => handleDeleteIdea(e, idea)}
-                                    className="btn-text"
+                                    className="btn-icon p-1.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
                                     title="Delete this idea"
-                                    style={{
-                                        marginTop: '8px',
-                                        fontSize: '0.8rem',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '6px',
-                                        padding: '6px 12px',
-                                        width: '100%',
-                                        justifyContent: 'center',
-                                        border: '1px solid var(--color-border)',
-                                        borderRadius: '8px',
-                                        transition: 'all 0.2s ease',
-                                        color: '#dc2626'
-                                    }}
-                                    onMouseEnter={(e) => {
-                                        e.currentTarget.style.backgroundColor = '#fef2f2';
-                                        e.currentTarget.style.borderColor = '#dc2626';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = '';
-                                        e.currentTarget.style.borderColor = 'var(--color-border)';
-                                    }}
                                 >
-                                    <Trash2 size={14} /> Delete Idea
+                                    <Trash2 size={16} />
                                 </button>
                             </div>
                         </div>
@@ -329,43 +270,25 @@ export const Home: React.FC = () => {
             {!showViabilityModal && (viabilityLoading || viabilityReport) && (
                 <div
                     onClick={() => setShowViabilityModal(true)}
-                    style={{
-                        position: 'fixed',
-                        bottom: '24px',
-                        right: '24px',
-                        backgroundColor: viabilityLoading ? 'var(--color-accent)' : 'var(--color-success)',
-                        color: 'white',
-                        padding: '12px 20px',
-                        borderRadius: '12px',
-                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        fontSize: '0.9rem',
-                        fontWeight: '500',
-                        zIndex: 999,
-                        transition: 'transform 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    className={`fixed bottom-8 right-8 text-white px-6 py-4 rounded-2xl shadow-xl shadow-accent/20 cursor-pointer flex items-center gap-3 text-sm font-bold z-[999] transition-transform duration-200 hover:scale-105 hover:-translate-y-1 ${viabilityLoading ? 'bg-accent' : 'bg-success'}`}
                 >
                     {viabilityLoading ? (
                         <>
-                            <div style={{
-                                width: '16px',
-                                height: '16px',
-                                border: '2px solid rgba(255,255,255,0.3)',
-                                borderTopColor: 'white',
-                                borderRadius: '50%',
-                                animation: 'spin 1s linear infinite'
-                            }} />
-                            Generating report...
-                            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div>
+                                <div className="text-xs opacity-80 uppercase tracking-wider">AI Agent</div>
+                                Generating Report...
+                            </div>
                         </>
                     ) : (
                         <>
-                            ✓ Report ready! Click to view
+                            <div className="p-1 bg-white/20 rounded-full">
+                                <Sparkles size={16} className="fill-current" />
+                            </div>
+                            <div>
+                                <div className="text-xs opacity-80 uppercase tracking-wider">Done</div>
+                                Report Ready!
+                            </div>
                         </>
                     )}
                 </div>

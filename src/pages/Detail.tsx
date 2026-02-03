@@ -81,9 +81,6 @@ export const Detail: React.FC = () => {
     }, [id, location.state]);
 
     // This function now only updates local state and DB for *user text edits*.
-    // Using functional updates is critical if we were debouncing, but here we are direct.
-    // However, to be safe against race conditions from *other* sources (like chat),
-    // we should really use a functional update and then save the RESULT.
     const handleTextChange = (field: keyof Idea, value: string) => {
         setIdea(prev => {
             if (!prev) return null;
@@ -112,8 +109,6 @@ export const Detail: React.FC = () => {
         if (!idea || !settings) return;
         setExtracting(true);
         try {
-            // We can't rely on 'idea' state variable here being fresh after the await
-            // so we should pass the idea to the service, but when updating state, use functional.
             const keywords = await aiService.extractKeywords(idea, settings);
 
             setIdea(prev => {
@@ -203,42 +198,39 @@ export const Detail: React.FC = () => {
         }
     };
 
-    if (loading) return <div style={{ padding: '20px' }}>Loading...</div>;
-    if (!idea) return <div style={{ padding: '20px' }}>Idea not found</div>;
+    if (loading) return <div className="p-5">Loading...</div>;
+    if (!idea) return <div className="p-5">Idea not found</div>;
 
     return (
-        <div style={{ maxWidth: '1200px', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <div className="max-w-[1200px] mx-auto h-full flex flex-col w-full">
+            <div className="flex justify-between items-center mb-4">
                 <button
                     onClick={() => navigate('/')}
                     className="btn-icon"
                 >
                     <ArrowLeft size={20} /> Back
                 </button>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div className="flex gap-2">
                     <button
                         onClick={handleAnalyzeViability}
-                        className="btn-icon"
+                        className="btn-icon text-accent"
                         title="Examine Business Viability"
-                        style={{ color: 'var(--color-accent)' }}
                         disabled={viabilityLoading}
                     >
                         <Search size={20} />
                     </button>
                     <button
                         onClick={handleAnalyzeCompetitors}
-                        className="btn-icon"
+                        className="btn-icon text-[#ff3b30]"
                         title="Competitor Analysis"
-                        style={{ color: '#ff3b30' }}
                         disabled={competitorLoading}
                     >
                         <Swords size={20} />
                     </button>
                     <button
                         onClick={() => setShowOpenCodeModal(true)}
-                        className="btn-icon"
+                        className="btn-icon text-accent"
                         title="Build with OpenCode"
-                        style={{ color: 'var(--color-accent)' }}
                     >
                         <Terminal size={20} />
                     </button>
@@ -268,40 +260,23 @@ export const Detail: React.FC = () => {
 
             <div className="responsive-grid">
                 {/* Left Column: Editor */}
-                <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="card flex flex-col overflow-hidden">
                     <input
                         value={idea.title}
                         onChange={e => handleTextChange('title', e.target.value)}
                         placeholder="Idea Title"
-                        style={{
-                            fontSize: '1.5rem',
-                            fontWeight: 'bold',
-                            border: 'none',
-                            background: 'transparent',
-                            marginBottom: '16px',
-                            color: 'var(--color-text-primary)',
-                            outline: 'none'
-                        }}
+                        className="text-2xl font-bold border-none bg-transparent mb-4 text-text-primary outline-none"
                     />
                     <textarea
                         value={idea.details}
                         onChange={e => handleTextChange('details', e.target.value)}
                         placeholder="Describe your idea in detail..."
-                        style={{
-                            flex: 1,
-                            border: 'none',
-                            background: 'transparent',
-                            resize: 'none',
-                            color: 'var(--color-text-primary)',
-                            fontSize: '1rem',
-                            outline: 'none',
-                            lineHeight: '1.6'
-                        }}
+                        className="flex-1 border-none bg-transparent resize-none text-text-primary text-base outline-none leading-relaxed"
                     />
 
-                    <div style={{ marginTop: '16px', borderTop: '1px solid var(--color-border)', paddingTop: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-text-secondary)' }}>KEYWORDS</span>
+                    <div className="mt-4 border-t border-border pt-4">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-xs font-bold text-text-secondary">KEYWORDS</span>
                             <button
                                 onClick={extractKeywords}
                                 className="btn-text"
@@ -310,19 +285,19 @@ export const Detail: React.FC = () => {
                                 <Sparkles size={12} /> {extracting ? 'Extracting...' : 'Extract'}
                             </button>
                         </div>
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <div className="flex gap-2 flex-wrap">
                             {idea.keywords.map((kw, idx) => (
-                                <span key={idx} style={{ fontSize: '0.8rem', backgroundColor: 'var(--color-background)', padding: '4px 12px', borderRadius: '16px' }}>
+                                <span key={idx} className="text-xs bg-background px-3 py-1 rounded-2xl">
                                     {kw}
                                 </span>
                             ))}
-                            {idea.keywords.length === 0 && <span style={{ color: 'var(--color-text-secondary)', fontSize: '0.8rem' }}>No keywords extracted yet.</span>}
+                            {idea.keywords.length === 0 && <span className="text-text-secondary text-xs">No keywords extracted yet.</span>}
                         </div>
                     </div>
                 </div>
 
                 {/* Right Column: Chat */}
-                <div style={{ height: '100%' }}>
+                <div className="h-full">
                     <Chat idea={idea} onChatUpdate={handleChatUpdate} onAppendToNote={handleAppendToNote} />
                 </div>
             </div>
@@ -347,39 +322,12 @@ export const Detail: React.FC = () => {
             {!showViabilityModal && (viabilityLoading || viabilityReport) && (
                 <div
                     onClick={() => setShowViabilityModal(true)}
-                    style={{
-                        position: 'fixed',
-                        bottom: '24px',
-                        right: '24px',
-                        backgroundColor: viabilityLoading ? 'var(--color-accent)' : 'var(--color-success)',
-                        color: 'white',
-                        padding: '12px 20px',
-                        borderRadius: '12px',
-                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        fontSize: '0.9rem',
-                        fontWeight: '500',
-                        zIndex: 999,
-                        transition: 'transform 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    className={`fixed bottom-6 right-6 text-white px-5 py-3 rounded-xl shadow-lg cursor-pointer flex items-center gap-2.5 text-sm font-medium z-[999] transition-transform duration-200 hover:scale-105 ${viabilityLoading ? 'bg-accent' : 'bg-success'}`}
                 >
                     {viabilityLoading ? (
                         <>
-                            <div style={{
-                                width: '16px',
-                                height: '16px',
-                                border: '2px solid rgba(255,255,255,0.3)',
-                                borderTopColor: 'white',
-                                borderRadius: '50%',
-                                animation: 'spin 1s linear infinite'
-                            }} />
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             Generating report...
-                            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                         </>
                     ) : (
                         <>
@@ -392,39 +340,15 @@ export const Detail: React.FC = () => {
             {!showCompetitorModal && (competitorLoading || competitorReport) && (
                 <div
                     onClick={() => setShowCompetitorModal(true)}
+                    className={`fixed bottom-6 text-white px-5 py-3 rounded-xl shadow-lg cursor-pointer flex items-center gap-2.5 text-sm font-medium z-[999] transition-all duration-200 hover:scale-105 ${competitorLoading ? 'bg-[#ff3b30]' : 'bg-success'}`}
                     style={{
-                        position: 'fixed',
-                        bottom: '24px',
-                        right: (viabilityLoading || viabilityReport) ? '280px' : '24px', // Shift left if viability is also active
-                        backgroundColor: competitorLoading ? '#ff3b30' : 'var(--color-success)',
-                        color: 'white',
-                        padding: '12px 20px',
-                        borderRadius: '12px',
-                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        fontSize: '0.9rem',
-                        fontWeight: '500',
-                        zIndex: 999,
-                        transition: 'all 0.2s ease',
+                         right: (viabilityLoading || viabilityReport) ? '280px' : '24px',
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
                     {competitorLoading ? (
                         <>
-                            <div style={{
-                                width: '16px',
-                                height: '16px',
-                                border: '2px solid rgba(255,255,255,0.3)',
-                                borderTopColor: 'white',
-                                borderRadius: '50%',
-                                animation: 'spin 1s linear infinite'
-                            }} />
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             Analyzing competitors...
-                            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                         </>
                     ) : (
                         <>
