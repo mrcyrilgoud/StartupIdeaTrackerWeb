@@ -71,9 +71,12 @@ A flexible abstraction layer that supports multiple LLM providers:
 1. Clone the repository.
 2. Install dependencies:
    ```bash
-   npm install
+   npm install```
+3. Intialize the DB:
+   ```bash
+   npm run db
    ```
-3. Run the development server:
+4. Run the development server:
    ```bash
    npm run dev
    ```
@@ -88,3 +91,44 @@ Navigate to the **Settings** page in the app:
 - `src/pages`: Top-level route components (Home, Detail, Generator, Settings).
 - `src/services`: Core logic for Data and AI.
 - `src/types.ts`: TypeScript definitions for Ideas, ChatMessages, and Settings.
+
+---
+
+## Deployment to Cloudflare Pages
+
+This project is optimized for deployment on **Cloudflare Pages**.
+
+### Configuration
+The project includes a `wrangler.jsonc` file for Cloudflare Pages configuration. It specifies the build command (`pnpm build`) and the output directory (`dist`).
+
+### Option 1: Git Integration (Recommended)
+1. Push your code to GitHub or GitLab.
+2. In the Cloudflare Dashboard, go to **Workers & Pages** > **Create application** > **Pages** > **Connect to Git**.
+3. Select your repository.
+4. Cloudflare will automatically detect the `wrangler.jsonc` settings:
+    - **Build command**: `pnpm build`
+    - **Build output directory**: `dist`
+5. Click **Save and Deploy**.
+
+### Option 2: CLI Deployment
+1. Log in to your Cloudflare account:
+   ```bash
+   npx wrangler login
+   ```
+2. Build the project:
+   ```bash
+   pnpm build
+   ```
+3. Deploy to Pages:
+   ```bash
+   npx wrangler pages deploy dist
+   ```
+
+### SPA Routing
+A `public/_redirects` file is included to ensure that deep links (e.g., `/idea/123`) work correctly by redirecting all requests to `index.html`.
+
+### Important Note on Data Persistence
+The current `dbService` implementation in [src/services/db.ts](src/services/db.ts) is configured to connect to a local `json-server` (`http://localhost:3001`). This server **will not be available** when deployed to Cloudflare Pages.
+
+To ensure the app works in production, consider refactoring `dbService` to use `localStorage` or `IndexedDB` for client-side persistence, or **Cloudflare D1** if you require a remote database.
+
