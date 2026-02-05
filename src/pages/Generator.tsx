@@ -78,7 +78,8 @@ export const Generator: React.FC = () => {
             timestamp: Date.now(),
             keywords: [],
             chatHistory: [],
-            relatedIdeaIds: []
+            relatedIdeaIds: [],
+            status: 'draft'
         };
         await dbService.saveIdea(newIdea);
         // We stay on the page to allow saving others
@@ -93,8 +94,8 @@ export const Generator: React.FC = () => {
                     <button
                         onClick={() => setMode('standard')}
                         className={`flex-1 p-3 rounded-lg font-semibold cursor-pointer transition-colors flex items-center justify-center
-                            ${mode === 'standard' 
-                                ? 'border-2 border-accent bg-[#5856d61a] text-accent' 
+                            ${mode === 'standard'
+                                ? 'border-2 border-accent bg-[#5856d61a] text-accent'
                                 : 'border border-border bg-transparent text-text-primary hover:bg-background'
                             }`}
                     >
@@ -104,8 +105,8 @@ export const Generator: React.FC = () => {
                     <button
                         onClick={() => setMode('combination')}
                         className={`flex-1 p-3 rounded-lg font-semibold cursor-pointer transition-colors flex items-center justify-center
-                            ${mode === 'combination' 
-                                ? 'border-2 border-accent bg-[#5856d61a] text-accent' 
+                            ${mode === 'combination'
+                                ? 'border-2 border-accent bg-[#5856d61a] text-accent'
                                 : 'border border-border bg-transparent text-text-primary hover:bg-background'
                             }`}
                     >

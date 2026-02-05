@@ -53,14 +53,34 @@ export const HomeChat: React.FC = () => {
         setLoading(true);
 
         try {
-            const response = await aiService.brainstorm(userMsg.content, newHistory, settings);
+            const rawResponse = await aiService.brainstorm(userMsg.content, newHistory, settings);
+
+            let response = rawResponse;
+            let shouldCreateIdea = false;
+
+            if (rawResponse.includes('[ACTION: CREATE_IDEA]')) {
+                shouldCreateIdea = true;
+                response = rawResponse.replace('[ACTION: CREATE_IDEA]', '').trim();
+            }
+
             const aiMsg: ChatMessage = {
                 id: uuidv4(),
                 role: 'assistant',
                 content: response,
                 timestamp: Date.now()
             };
-            setHistory([...newHistory, aiMsg]);
+
+            const updatedHistory = [...newHistory, aiMsg];
+            setHistory(updatedHistory);
+
+            if (shouldCreateIdea) {
+                // Short delay for user to read the confirmation message
+                setTimeout(() => {
+                    if (bottomRef.current) { // Simple check if still mounted
+                        handleCreateIdea(updatedHistory);
+                    }
+                }, 1000);
+            }
         } catch (error) {
             console.error(error);
             const errorMsg: ChatMessage = {
@@ -75,15 +95,18 @@ export const HomeChat: React.FC = () => {
         }
     };
 
-    const handleCreateIdea = async () => {
-        if (history.length === 0 || creatingIdea) return;
+    const handleCreateIdea = async (historyOverride?: ChatMessage[] | any) => {
+        // historyOverride might be a click event if called from button
+        const historyToUse = Array.isArray(historyOverride) ? historyOverride : history;
+
+        if (historyToUse.length === 0 || creatingIdea) return;
         setCreatingIdea(true);
 
         try {
             if (!settings) throw new Error("Settings not loaded");
 
             // 1. Summarize conversation into an idea
-            const generatedIdea = await aiService.summarizeIdeaFromChat(history, settings);
+            const generatedIdea = await aiService.summarizeIdeaFromChat(historyToUse, settings);
 
             // 2. Create the wrapper Idea object
             const newIdea: Idea = {
@@ -92,7 +115,7 @@ export const HomeChat: React.FC = () => {
                 details: generatedIdea.details,
                 timestamp: Date.now(),
                 keywords: [],
-                chatHistory: history, // Preserve the brainstorming context
+                chatHistory: historyToUse, // Preserve the brainstorming context
                 relatedIdeaIds: [],
                 status: 'draft'
             };
@@ -149,10 +172,10 @@ export const HomeChat: React.FC = () => {
                         {history.map(msg => (
                             <div key={msg.id}
                                 className={`max-w-[85%] px-4 py-3 rounded-2xl leading-relaxed ${msg.role === 'user'
-                                        ? 'self-end bg-accent text-white rounded-br-sm'
-                                        : msg.role === 'system'
-                                            ? 'self-center bg-red-50 text-red-600 border border-red-100 text-sm'
-                                            : 'self-start bg-background text-text-primary border border-border rounded-bl-sm'
+                                    ? 'self-end bg-accent text-white rounded-br-sm'
+                                    : msg.role === 'system'
+                                        ? 'self-center bg-red-50 text-red-600 border border-red-100 text-sm'
+                                        : 'self-start bg-background text-text-primary border border-border rounded-bl-sm'
                                     }`}
                             >
                                 <div className="whitespace-pre-wrap">{msg.content}</div>
@@ -192,8 +215,8 @@ export const HomeChat: React.FC = () => {
                         onClick={handleSend}
                         disabled={!input.trim() || loading || creatingIdea}
                         className={`p-3 rounded-xl transition-all duration-200 ${input.trim()
-                                ? 'bg-accent text-white shadow-md hover:shadow-lg hover:bg-accent-hover'
-                                : 'bg-transparent text-text-secondary opacity-50 cursor-not-allowed'
+                            ? 'bg-accent text-white shadow-md hover:shadow-lg hover:bg-accent-hover'
+                            : 'bg-transparent text-text-secondary opacity-50 cursor-not-allowed'
                             }`}
                     >
                         {hasStarted ? <Send size={20} /> : <ArrowRight size={24} />}

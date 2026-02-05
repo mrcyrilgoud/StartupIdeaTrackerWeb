@@ -295,6 +295,8 @@ A concluding paragraph on the best path to enter the market.
       3. Suggest interesting angles or pivots.
       4. Be concise and conversational.
       
+      IMPORTANT: If the user explicitly asks to "save this idea", "create an idea", "capture this", or "I'm done", or indicates they want to store the result, you MUST append the following tag to the end of your response: [ACTION: CREATE_IDEA]
+      
       Previous conversation:
       ${historyTranscript}
       
