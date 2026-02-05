@@ -4,6 +4,7 @@ import { Home } from './pages/Home';
 import { Detail } from './pages/Detail';
 import { Generator } from './pages/Generator';
 import { SettingsPage } from './pages/Settings';
+import { IdeaSpark } from './pages/IdeaSpark';
 
 function App() {
     return (
@@ -12,6 +13,7 @@ function App() {
                 <Route path="/" element={<Layout />}>
                     <Route index element={<Home />} />
                     <Route path="generate" element={<Generator />} />
+                    <Route path="spark" element={<IdeaSpark />} />
                     <Route path="idea/:id" element={<Detail />} />
                     <Route path="settings" element={<SettingsPage />} />
                 </Route>

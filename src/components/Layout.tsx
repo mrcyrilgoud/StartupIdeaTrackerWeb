@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Lightbulb, Settings, Sparkles } from 'lucide-react';
+import { Lightbulb, Settings, Sparkles, Gamepad2 } from 'lucide-react';
 
 export const Layout: React.FC = () => {
     const location = useLocation();
@@ -38,6 +38,16 @@ export const Layout: React.FC = () => {
                         title="Generator"
                     >
                         <Sparkles size={20} className={isActive('/generate') ? "fill-current" : ""} />
+                    </Link>
+                    <Link
+                        to="/spark"
+                        className={`p-2 rounded-xl transition-all duration-200 ${isActive('/spark')
+                            ? 'bg-white dark:bg-slate-700 text-accent shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5'
+                            }`}
+                        title="Idea Spark Game"
+                    >
+                        <Gamepad2 size={20} className={isActive('/spark') ? "fill-current" : ""} />
                     </Link>
                     <Link
                         to="/settings"
