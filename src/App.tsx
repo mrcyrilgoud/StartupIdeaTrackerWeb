@@ -5,6 +5,7 @@ import { Detail } from './pages/Detail';
 import { Generator } from './pages/Generator';
 import { SettingsPage } from './pages/Settings';
 import { IdeaSpark } from './pages/IdeaSpark';
+import { StartupRace } from './pages/StartupRace';
 
 function App() {
     return (
@@ -14,6 +15,7 @@ function App() {
                     <Route index element={<Home />} />
                     <Route path="generate" element={<Generator />} />
                     <Route path="spark" element={<IdeaSpark />} />
+                    <Route path="race" element={<StartupRace />} />
                     <Route path="idea/:id" element={<Detail />} />
                     <Route path="settings" element={<SettingsPage />} />
                 </Route>
