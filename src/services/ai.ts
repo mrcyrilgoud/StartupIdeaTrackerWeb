@@ -10,6 +10,12 @@ export interface MVPAnalysisResult {
     reason: string;
 }
 
+export interface FolderSuggestion {
+    name: string;
+    description: string;
+    ideaIds: string[];
+}
+
 export const aiService = {
     async generateResponse(prompt: string, settings: AppSettings, thinking: boolean = false, jsonMode: boolean = false): Promise<string> {
         if (settings.provider === 'gemini') {
@@ -132,6 +138,61 @@ export const aiService = {
 
             const jsonCandidate = responseText.substring(firstBrace, lastBrace + 1);
             return JSON.parse(jsonCandidate);
+        } catch (e) {
+            console.error("Failed to parse AI response as JSON", responseText);
+            throw new Error("AI response was not valid JSON");
+        }
+    },
+
+    async suggestFolders(ideas: Idea[], currentFolders: any[], settings: AppSettings): Promise<FolderSuggestion[]> {
+        const ideasContext = ideas.map(idea => `ID: ${idea.id}\nTitle: ${idea.title}\nDetails: ${idea.details}`).join('\n\n');
+        const foldersContext = currentFolders.map(f => f.name).join(', ');
+
+        const prompt = `
+        You are a smart organizational assistant. Analyze the following startup ideas and group them into logical folders to help the user stay organized.
+        
+        Current Folders (you can reuse these or create new ones): ${foldersContext}
+
+        Ideas to Organize:
+        ${ideasContext}
+
+        Rules:
+        1. Create broad but specific categories (e.g., "SaaS", "HealthTech", "Consumer Apps").
+        2. Assign every idea to exactly one folder.
+        3. If an idea fits well into an existing folder, use that folder name.
+        4. If an idea is completely unique and doesn't fit with others, you can put it in a "Miscellaneous" folder or create a specific one for it.
+
+        Strictly output the result as a valid JSON array of objects with the following keys:
+        - "name": Name of the folder.
+        - "description": Short description of what belongs in this folder.
+        - "ideaIds": Array of strings containing the IDs of ideas in this folder.
+
+        Do NOT include any markdown formatting or code fences. Return ONLY the raw JSON array.
+        `;
+
+        const responseText = await this.generateResponse(prompt, settings, true, true);
+
+        try {
+            const firstBracket = responseText.indexOf('[');
+            const lastBracket = responseText.lastIndexOf(']');
+
+            if (firstBracket === -1 || lastBracket === -1) {
+                throw new Error("No JSON array found in response");
+            }
+
+            const jsonCandidate = responseText.substring(firstBracket, lastBracket + 1);
+            const parsed = JSON.parse(jsonCandidate);
+
+            if (!Array.isArray(parsed)) {
+                throw new Error("AI response is not an array");
+            }
+
+            // Basic schema validation
+            return parsed.map((item: any) => ({
+                name: item.name || "Unnamed Folder",
+                description: item.description || "",
+                ideaIds: Array.isArray(item.ideaIds) ? item.ideaIds : []
+            }));
         } catch (e) {
             console.error("Failed to parse AI response as JSON", responseText);
             throw new Error("AI response was not valid JSON");

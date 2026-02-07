@@ -1,4 +1,4 @@
-import { Idea, AppSettings } from '../types';
+import { Idea, AppSettings, Folder } from '../types';
 
 const API_URL = 'http://localhost:3001/ideas';
 
@@ -83,6 +83,57 @@ export const dbService = {
         }
     },
 
+    // --- Folders ---
+
+    async getAllFolders(): Promise<Folder[]> {
+        try {
+            const response = await fetch('http://localhost:3001/folders');
+            if (!response.ok) throw new Error(response.statusText);
+            return await response.json();
+        } catch (error) {
+            console.error('Failed to fetch folders:', error);
+            return [];
+        }
+    },
+
+    async saveFolder(folder: Folder): Promise<string> {
+        try {
+            const response = await fetch(`http://localhost:3001/folders/${folder.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(folder),
+            });
+
+            if (response.ok) return folder.id;
+
+            if (response.status === 404) {
+                const createResponse = await fetch('http://localhost:3001/folders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(folder),
+                });
+                if (!createResponse.ok) throw new Error(`Failed to create folder: ${createResponse.statusText}`);
+                return folder.id;
+            }
+            throw new Error(`Failed to save folder: ${response.statusText}`);
+        } catch (error) {
+            console.error('Error saving folder:', error);
+            throw error;
+        }
+    },
+
+    async deleteFolder(id: string): Promise<void> {
+        try {
+            const response = await fetch(`http://localhost:3001/folders/${id}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) throw new Error(`Failed to delete folder: ${response.statusText}`);
+        } catch (error) {
+            console.error(`Failed to delete folder ${id}:`, error);
+            throw error;
+        }
+    },
+
     async getSettings(): Promise<AppSettings> {
         const stored = localStorage.getItem('app-settings');
         if (stored) return JSON.parse(stored);
@@ -101,11 +152,13 @@ export const dbService = {
 
     async exportAllData(): Promise<string> {
         const ideas = await this.getAllIdeas();
+        const folders = await this.getAllFolders();
         const settings = await this.getSettings();
         const exportData = {
             version: 1,
             timestamp: Date.now(),
             ideas,
+            folders,
             settings
         };
         return JSON.stringify(exportData, null, 2);
@@ -117,6 +170,11 @@ export const dbService = {
             if (data.ideas && Array.isArray(data.ideas)) {
                 for (const idea of data.ideas) {
                     await this.saveIdea(idea);
+                }
+            }
+            if (data.folders && Array.isArray(data.folders)) {
+                for (const folder of data.folders) {
+                    await this.saveFolder(folder);
                 }
             }
             if (data.settings) {

@@ -5,6 +5,12 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  timestamp: number;
+}
+
 export interface Idea {
   id: string;
   title: string;
@@ -15,6 +21,7 @@ export interface Idea {
   chatHistory: ChatMessage[];
   relatedIdeaIds: string[];
   status: 'draft' | 'validation' | 'mvp' | 'completed' | 'archived';
+  folderId?: string;
 }
 
 export type IdeaStatus = Idea['status'];
