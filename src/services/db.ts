@@ -1,11 +1,13 @@
 import { Idea, AppSettings, Folder } from '../types';
 
-const API_URL = 'http://localhost:3001/ideas';
+const API_BASE_URL = 'http://localhost:3001';
+const IDEAS_URL = `${API_BASE_URL}/ideas`;
+const FOLDERS_URL = `${API_BASE_URL}/folders`;
 
 export const dbService = {
     async getAllIdeas(): Promise<Idea[]> {
         try {
-            const response = await fetch(API_URL);
+            const response = await fetch(IDEAS_URL);
             if (!response.ok) throw new Error(response.statusText);
             const ideas: Idea[] = await response.json();
             return ideas;
@@ -17,7 +19,7 @@ export const dbService = {
 
     async getIdea(id: string): Promise<Idea | undefined> {
         try {
-            const response = await fetch(`${API_URL}/${id}`);
+            const response = await fetch(`${IDEAS_URL}/${id}`);
             if (!response.ok) {
                 if (response.status === 404) return undefined;
                 throw new Error(`Error fetching idea: ${response.statusText}`);
@@ -33,7 +35,7 @@ export const dbService = {
         try {
             // Optimistic Update: Try to PUT first (99% of cases)
             // specific to json-server: PUT /ideas/:id updates the item
-            const response = await fetch(`${API_URL}/${idea.id}`, {
+            const response = await fetch(`${IDEAS_URL}/${idea.id}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
@@ -49,7 +51,7 @@ export const dbService = {
 
             // If 404, it doesn't exist yet, so we POST (Create)
             if (response.status === 404) {
-                const createResponse = await fetch(API_URL, {
+                const createResponse = await fetch(IDEAS_URL, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -73,7 +75,7 @@ export const dbService = {
 
     async deleteIdea(id: string): Promise<void> {
         try {
-            const response = await fetch(`${API_URL}/${id}`, {
+            const response = await fetch(`${IDEAS_URL}/${id}`, {
                 method: 'DELETE',
             });
             if (!response.ok) {
@@ -89,7 +91,7 @@ export const dbService = {
 
     async getAllFolders(): Promise<Folder[]> {
         try {
-            const response = await fetch('http://localhost:3001/folders');
+            const response = await fetch(FOLDERS_URL);
             if (!response.ok) throw new Error(response.statusText);
             return await response.json();
         } catch (error) {
@@ -100,7 +102,7 @@ export const dbService = {
 
     async saveFolder(folder: Folder): Promise<string> {
         try {
-            const response = await fetch(`http://localhost:3001/folders/${folder.id}`, {
+            const response = await fetch(`${FOLDERS_URL}/${folder.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(folder),
@@ -109,7 +111,7 @@ export const dbService = {
             if (response.ok) return folder.id;
 
             if (response.status === 404) {
-                const createResponse = await fetch('http://localhost:3001/folders', {
+                const createResponse = await fetch(FOLDERS_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(folder),
@@ -126,7 +128,7 @@ export const dbService = {
 
     async deleteFolder(id: string): Promise<void> {
         try {
-            const response = await fetch(`http://localhost:3001/folders/${id}`, {
+            const response = await fetch(`${FOLDERS_URL}/${id}`, {
                 method: 'DELETE',
             });
             if (!response.ok) throw new Error(`Failed to delete folder: ${response.statusText}`);

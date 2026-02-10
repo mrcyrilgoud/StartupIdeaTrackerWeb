@@ -19,22 +19,17 @@ export const GeneratedIdeaCard: React.FC<GeneratedIdeaCardProps> = ({ idea, onSa
     };
 
     return (
-        <div className="card" style={{ marginBottom: '16px', borderLeft: '4px solid var(--color-accent)' }}>
-            <h3 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Sparkles size={16} color="var(--color-accent)" />
+        <div className="card mb-4 border-l-4 border-accent">
+            <h3 className="mt-0 flex items-center gap-2">
+                <Sparkles size={16} className="text-accent" />
                 {idea.title}
             </h3>
-            <p style={{ lineHeight: '1.6', color: 'var(--color-text-secondary)' }}>{idea.details}</p>
-            <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+            <p className="leading-relaxed text-text-secondary">{idea.details}</p>
+            <div className="mt-4 flex justify-end">
                 <button
                     onClick={handleSave}
                     disabled={saved || loading}
-                    className="btn-primary"
-                    style={{
-                        opacity: saved ? 0.6 : 1,
-                        backgroundColor: saved ? '#34C759' : 'var(--color-accent)',
-                        display: 'flex', alignItems: 'center', gap: '6px'
-                    }}
+                    className={`btn-primary flex items-center gap-1.5 ${saved ? 'opacity-60 bg-green-500 hover:bg-green-600 border-green-500' : ''}`}
                 >
                     {loading ? 'Saving...' : saved ? (
                         <>
