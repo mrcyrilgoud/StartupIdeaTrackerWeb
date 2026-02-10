@@ -9,6 +9,7 @@ interface FolderSidebarProps {
     onCreateFolder: (name: string) => void;
     onDeleteFolder: (folderId: string) => void;
     onSmartOrganize: () => void;
+    onDropIdea: (folderId: string, ideaId: string) => void;
     className?: string; // Allow customization of sidebar styles
 }
 
@@ -19,10 +20,12 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
     onCreateFolder,
     onDeleteFolder,
     onSmartOrganize,
+    onDropIdea,
     className
 }) => {
     const [isCreating, setIsCreating] = useState(false);
     const [newFolderName, setNewFolderName] = useState('');
+    const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
     const handleCreateSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -30,6 +33,38 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
             onCreateFolder(newFolderName.trim());
             setNewFolderName('');
             setIsCreating(false);
+        }
+    };
+
+    const handleDragOver = (e: React.DragEvent, folderId: string) => {
+        e.preventDefault();
+        e.stopPropagation(); // Stop propagation
+        // Only set state if different to avoid re-renders, although React handles this mostly.
+        if (dragOverFolderId !== folderId) {
+            setDragOverFolderId(folderId);
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+         e.preventDefault();
+         e.stopPropagation();
+
+        // Prevent flickering when dragging over children
+        // The relatedTarget is the element being entered. If it's a child of the currentTarget (the drop zone),
+        // we are still "inside" the drop zone, so don't clear the state.
+        if (e.currentTarget.contains(e.relatedTarget as Node)) {
+            return;
+        }
+        setDragOverFolderId(null);
+    };
+
+    const handleDrop = (e: React.DragEvent, folderId: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverFolderId(null);
+        const ideaId = e.dataTransfer.getData('ideaId');
+        if (ideaId) {
+            onDropIdea(folderId, ideaId);
         }
     };
 
@@ -50,11 +85,18 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
                     </button>
                     <button
                         onClick={() => onSelectFolder('uncategorized')}
-                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${selectedFolderId === 'uncategorized'
-                            ? 'bg-accent/10 text-accent font-medium'
+                        onDragOver={(e) => handleDragOver(e, 'uncategorized')}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleDrop(e, 'uncategorized')}
+                        className={`relative w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${selectedFolderId === 'uncategorized' || dragOverFolderId === 'uncategorized'
+                            ? 'bg-accent/10 text-accent font-medium ring-2 ring-accent ring-inset'
                             : 'text-text-primary hover:bg-background'
                             }`}
                     >
+                        {/* Overlay to catch drag events and prevent child interference */}
+                        {dragOverFolderId === 'uncategorized' && (
+                            <div className="absolute inset-0 z-10 bg-transparent" />
+                        )}
                         <FolderIcon size={18} className="text-text-secondary" />
                         Uncategorized
                     </button>
@@ -86,12 +128,19 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
                     {folders.map(folder => (
                         <div
                             key={folder.id}
-                            className={`group flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer ${selectedFolderId === folder.id
-                                ? 'bg-accent/10 text-accent font-medium'
+                            onDragOver={(e) => handleDragOver(e, folder.id)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDrop(e, folder.id)}
+                            className={`group relative flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer ${selectedFolderId === folder.id || dragOverFolderId === folder.id
+                                ? 'bg-accent/10 text-accent font-medium ring-2 ring-accent ring-inset'
                                 : 'text-text-primary hover:bg-background'
                                 }`}
                             onClick={() => onSelectFolder(folder.id)}
                         >
+                            {/* Overlay to catch drag events and prevent child interference */}
+                            {dragOverFolderId === folder.id && (
+                                <div className="absolute inset-0 z-10 bg-transparent" />
+                            )}
                             <div className="flex items-center gap-3 overflow-hidden">
                                 <FolderIcon size={18} className="shrink-0" />
                                 <span className="truncate">{folder.name}</span>

@@ -29,7 +29,7 @@ export const dbService = {
         }
     },
 
-    async saveIdea(idea: Idea): Promise<string> {
+    async saveIdea(idea: Idea, options?: RequestInit): Promise<string> {
         try {
             // Optimistic Update: Try to PUT first (99% of cases)
             // specific to json-server: PUT /ideas/:id updates the item
@@ -39,6 +39,7 @@ export const dbService = {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(idea),
+                ...options
             });
 
             // If successful, we are done
@@ -54,6 +55,7 @@ export const dbService = {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify(idea),
+                    ...options
                 });
 
                 if (!createResponse.ok) {

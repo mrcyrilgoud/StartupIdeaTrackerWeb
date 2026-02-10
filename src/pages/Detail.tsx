@@ -45,7 +45,7 @@ export const Detail: React.FC = () => {
                 clearTimeout(saveTimeoutRef.current);
                 // Flush any pending save immediately on unmount
                 if (latestIdeaRef.current) {
-                    dbService.saveIdea(latestIdeaRef.current);
+                    dbService.saveIdea(latestIdeaRef.current, { keepalive: true });
                 }
             }
         };

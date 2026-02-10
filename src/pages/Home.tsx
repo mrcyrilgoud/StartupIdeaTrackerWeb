@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Search, Trash2, FolderOutput, Folder as FolderIcon, LayoutGrid } from 'lucide-react';
+import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, MVPAnalysisResult } from '../services/ai';
 import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder } from '../types';
@@ -42,6 +42,12 @@ export const Home: React.FC = () => {
     const [showSmartOrganizeModal, setShowSmartOrganizeModal] = useState(false);
     const [smartSuggestions, setSmartSuggestions] = useState<any[]>([]);
     const [isSmartAnalyzing, setIsSmartAnalyzing] = useState(false);
+
+    // Auto-scroll ref
+    const mainContainerRef = React.useRef<HTMLDivElement>(null);
+
+    // Drag over state for "All Ideas" view
+    const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
     // Filter & Search State
     const [searchQuery, setSearchQuery] = useState('');
@@ -229,6 +235,85 @@ export const Home: React.FC = () => {
         }
     };
 
+    const handleDragStart = (e: React.DragEvent, idea: Idea) => {
+        e.dataTransfer.setData('ideaId', idea.id);
+        e.dataTransfer.effectAllowed = 'move';
+        // Add a visual drag image if needed, or let browser handle it
+    };
+
+    const handleDropIdea = (folderId: string, ideaId: string) => {
+        // Find idea in current state to update DB
+        const idea = ideas.find(i => i.id === ideaId);
+        if (!idea) return;
+
+        const targetFolderId = folderId === 'uncategorized' ? undefined : folderId;
+        if (idea.folderId === targetFolderId) return;
+
+        const updatedIdea = { ...idea, folderId: targetFolderId };
+
+        // Optimistic Update
+        setIdeas(prev => prev.map(i => i.id === ideaId ? updatedIdea : i));
+
+        // Async DB Update
+        dbService.saveIdea(updatedIdea).catch(e => {
+            console.error('Failed to move idea via drag and drop:', e);
+            alert('Failed to move idea, reverting changes...');
+            // Revert
+            setIdeas(prev => prev.map(i => i.id === ideaId ? idea : i));
+        });
+    };
+
+    const handleDragOver = (e: React.DragEvent, folderId: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (dragOverFolderId !== folderId) {
+            setDragOverFolderId(folderId);
+        }
+
+        // Trigger auto-scroll manually since we stopped propagation
+        handleAutoScroll(e);
+    };
+
+    const handleAutoScroll = (e: React.DragEvent) => {
+        const container = mainContainerRef.current;
+        if (!container) return;
+
+        const { top, bottom } = container.getBoundingClientRect();
+        const clientY = e.clientY;
+
+        // Threshold in pixels (e.g. 100px from edge)
+        const threshold = 100;
+        const scrollSpeed = 10;
+
+        if (clientY < top + threshold) {
+            // Scroll Up
+            container.scrollTop -= scrollSpeed;
+        } else if (clientY > bottom - threshold) {
+            // Scroll Down
+            container.scrollTop += scrollSpeed;
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.currentTarget.contains(e.relatedTarget as Node)) {
+            return;
+        }
+        setDragOverFolderId(null);
+    };
+
+    const handleGroupDrop = (e: React.DragEvent, folderId: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverFolderId(null);
+        const ideaId = e.dataTransfer.getData('ideaId');
+        if (ideaId) {
+            handleDropIdea(folderId, ideaId);
+        }
+    };
+
     const handleSmartOrganize = async () => {
         try {
             setShowSmartOrganizeModal(true);
@@ -349,21 +434,49 @@ export const Home: React.FC = () => {
             return 0;
         });
 
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+    // ... existing code ...
+
     return (
-        <div className="flex w-full h-[calc(100vh-64px)] overflow-hidden">
-            {/* Folder Sidebar - Fixed width */}
+        <div className="flex w-full h-[calc(100vh-64px)] overflow-hidden relative">
+            {/* Mobile Sidebar Overlay */}
+            {isMobileMenuOpen && (
+                <div
+                    className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                />
+            )}
+
+            {/* Folder Sidebar - Responsive */}
             <FolderSidebar
                 folders={folders}
                 selectedFolderId={selectedFolderId}
-                onSelectFolder={setSelectedFolderId}
+                onSelectFolder={(id) => {
+                    setSelectedFolderId(id);
+                    setIsMobileMenuOpen(false);
+                }}
                 onCreateFolder={handleCreateFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onSmartOrganize={handleSmartOrganize}
-                className="hidden md:flex shrink-0 border-r border-border"
+                onDropIdea={handleDropIdea}
+                className={`
+                    shrink-0 border-r border-border transition-transform duration-300 ease-in-out
+                    md:relative md:translate-x-0 md:flex
+                    fixed inset-y-0 left-0 z-50 w-72 bg-background shadow-2xl
+                    ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+                `}
             />
 
             {/* Main Content Area - Scrollable */}
-            <div className="flex-1 overflow-y-auto h-full p-4 md:p-8 relative">
+            <div
+                ref={mainContainerRef}
+                className="flex-1 overflow-y-auto h-full p-4 md:p-8 relative w-full"
+                onDragOver={(e) => {
+                    e.preventDefault();
+                    handleAutoScroll(e);
+                }}
+            >
                 <div className="max-w-6xl mx-auto w-full pb-20">
                     {/* Hero Section */}
                     <div className="mb-10 text-center py-10">
@@ -400,6 +513,13 @@ export const Home: React.FC = () => {
 
                     {/* Controls Bar */}
                     <div className="card mb-6 p-3 flex gap-4 flex-wrap items-center sticky top-0 z-10 bg-surface/95 backdrop-blur-sm border-border/50 shadow-sm">
+                        <button
+                            className="md:hidden p-2 -ml-2 text-text-secondary hover:text-primary"
+                            onClick={() => setIsMobileMenuOpen(true)}
+                        >
+                            <Menu size={24} />
+                        </button>
+
                         <div className="flex-1 min-w-[200px] flex items-center border border-border rounded-lg px-3 bg-background">
                             <Search size={18} className="text-text-secondary" />
                             <input
@@ -468,7 +588,9 @@ export const Home: React.FC = () => {
                                 const renderIdeaCard = (idea: Idea) => (
                                     <div
                                         key={idea.id}
-                                        className="card group relative flex flex-col h-full cursor-pointer overflow-hidden border-t-4 border-t-transparent hover:border-t-accent transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
+                                        draggable={true}
+                                        onDragStart={(e) => handleDragStart(e, idea)}
+                                        className="card group relative flex flex-col h-full cursor-pointer overflow-hidden border-t-4 border-t-transparent hover:border-t-accent transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:cursor-grabbing"
                                         onClick={(e) => {
                                             if ((e.target as HTMLElement).closest('button')) return;
                                             navigate(`/idea/${idea.id}`);
@@ -541,38 +663,72 @@ export const Home: React.FC = () => {
                                             {/* Render Folders First */}
                                             {folders.map(folder => {
                                                 const folderIdeas = groupedIdeas[folder.id];
-                                                if (!folderIdeas || folderIdeas.length === 0) return null;
+                                                const isDragOver = dragOverFolderId === folder.id;
+
+                                                if ((!folderIdeas || folderIdeas.length === 0) && !isDragOver) return null;
+
                                                 return (
-                                                    <div key={folder.id} className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                                    <div
+                                                        key={folder.id}
+                                                        className={`animate-in fade-in slide-in-from-bottom-4 duration-500 rounded-xl transition-all ${isDragOver ? 'bg-accent/5 ring-2 ring-accent ring-inset p-4' : ''}`}
+                                                        onDragOver={(e) => handleDragOver(e, folder.id)}
+                                                        onDragLeave={handleDragLeave}
+                                                        onDrop={(e) => handleGroupDrop(e, folder.id)}
+                                                    >
                                                         <div className="flex items-center gap-2 mb-4 text-text-secondary border-b border-border/50 pb-2">
-                                                            <FolderIcon size={20} className="text-accent" />
+                                                            <FolderIcon size={20} className={isDragOver ? "text-accent" : "text-accent"} />
                                                             <h3 className="text-xl font-bold text-text-primary">{folder.name}</h3>
                                                             <span className="text-xs bg-accent/10 text-accent px-2 py-0.5 rounded-full font-bold">
-                                                                {folderIdeas.length}
+                                                                {folderIdeas ? folderIdeas.length : 0}
                                                             </span>
+                                                            {isDragOver && (
+                                                                <span className="ml-auto text-xs text-accent font-bold animate-pulse">
+                                                                    Drop to move here
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full px-1">
-                                                            {folderIdeas.map(renderIdeaCard)}
+                                                            {folderIdeas && folderIdeas.map(renderIdeaCard)}
+                                                            {isDragOver && (!folderIdeas || folderIdeas.length === 0) && (
+                                                                <div className="h-32 border-2 border-dashed border-accent/30 rounded-lg flex items-center justify-center text-accent/50 text-sm">
+                                                                    Drop idea here
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 );
                                             })}
 
                                             {/* Render Uncategorized */}
-                                            {groupedIdeas['uncategorized'] && groupedIdeas['uncategorized'].length > 0 && (
-                                                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100">
+                                            {(groupedIdeas['uncategorized'] && groupedIdeas['uncategorized'].length > 0) || dragOverFolderId === 'uncategorized' ? (
+                                                <div
+                                                    className={`animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100 rounded-xl transition-all ${dragOverFolderId === 'uncategorized' ? 'bg-accent/5 ring-2 ring-accent ring-inset p-4' : ''}`}
+                                                    onDragOver={(e) => handleDragOver(e, 'uncategorized')}
+                                                    onDragLeave={handleDragLeave}
+                                                    onDrop={(e) => handleGroupDrop(e, 'uncategorized')}
+                                                >
                                                     <div className="flex items-center gap-2 mb-4 text-text-secondary border-b border-border/50 pb-2">
                                                         <LayoutGrid size={20} />
                                                         <h3 className="text-xl font-bold text-text-primary">Uncategorized</h3>
                                                         <span className="text-xs bg-text-secondary/10 text-text-secondary px-2 py-0.5 rounded-full font-bold">
-                                                            {groupedIdeas['uncategorized'].length}
+                                                            {groupedIdeas['uncategorized'] ? groupedIdeas['uncategorized'].length : 0}
                                                         </span>
+                                                        {dragOverFolderId === 'uncategorized' && (
+                                                            <span className="ml-auto text-xs text-accent font-bold animate-pulse">
+                                                                Drop to remove from folder
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full px-1">
-                                                        {groupedIdeas['uncategorized'].map(renderIdeaCard)}
+                                                        {groupedIdeas['uncategorized'] && groupedIdeas['uncategorized'].map(renderIdeaCard)}
+                                                        {dragOverFolderId === 'uncategorized' && (!groupedIdeas['uncategorized'] || groupedIdeas['uncategorized'].length === 0) && (
+                                                            <div className="h-32 border-2 border-dashed border-accent/30 rounded-lg flex items-center justify-center text-accent/50 text-sm">
+                                                                Drop idea here
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
-                                            )}
+                                            ) : null}
                                         </div>
                                     );
                                 }
