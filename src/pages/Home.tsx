@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu } from 'lucide-react';
+import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu, AlertTriangle } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, MVPAnalysisResult } from '../services/ai';
-import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder } from '../types';
+import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder, VettingResult, VettingCriteria } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { MVPResultModal } from '../components/MVPResultModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
+import { VettingModal } from '../components/VettingModal';
 import { HomeChat } from '../components/features/HomeChat';
 import { FolderSidebar } from '../components/features/FolderSidebar';
 import { MoveToFolderModal } from '../components/MoveToFolderModal';
@@ -22,6 +23,12 @@ export const Home: React.FC = () => {
     const [analyzingMVP, setAnalyzingMVP] = useState(false);
     const [mvpResult, setMvpResult] = useState<MVPAnalysisResult | null>(null);
     const [showMVPModal, setShowMVPModal] = useState(false);
+
+    // Vetting state
+    const [isVetting, setIsVetting] = useState(false);
+    const [vettingResults, setVettingResults] = useState<VettingResult[]>([]);
+    const [currentCriteria, setCurrentCriteria] = useState<VettingCriteria | null>(null);
+    const [showVettingModal, setShowVettingModal] = useState(false);
 
     // Viability analysis state
     const [viabilityLoading, setViabilityLoading] = useState(false);
@@ -402,6 +409,83 @@ export const Home: React.FC = () => {
         }
     };
 
+    const handleVetIdeas = () => {
+        if (filteredIdeas.length === 0) {
+            alert("No ideas to vet!");
+            return;
+        }
+        setVettingResults([]);
+        setCurrentCriteria(null);
+        setShowVettingModal(true);
+    };
+
+    const handleRunVetting = async (criteria: VettingCriteria) => {
+        try {
+            setCurrentCriteria(criteria);
+            setIsVetting(true);
+            setVettingResults([]);
+
+            const settings = await dbService.getSettings();
+            if (settings.provider === 'gemini' && !settings.geminiKey) {
+                alert("Please configure your Gemini API Key in Settings first.");
+                setIsVetting(false);
+                return;
+            }
+
+            const results = await aiService.vetIdeas(filteredIdeas, criteria, settings);
+            setVettingResults(results);
+
+            // Persist results to DB
+            const updates = results.map(async (result) => {
+                const ideaToUpdate = ideas.find(i => i.id === result.ideaId);
+                if (!ideaToUpdate) return;
+
+                // Check if we need to update:
+                // 1. If it's a new result (timestamp is strictly newer than what we have)
+                // 2. OR if we don't have it at all
+                const currentVetting = ideaToUpdate.vetting?.[criteria];
+                if (!currentVetting || result.timestamp > currentVetting.timestamp) {
+                    const updatedIdea = {
+                        ...ideaToUpdate,
+                        vetting: {
+                            ...ideaToUpdate.vetting,
+                            [criteria]: result
+                        }
+                    };
+                    await dbService.saveIdea(updatedIdea);
+                    return updatedIdea;
+                }
+            });
+
+            const updatedIdeas = (await Promise.all(updates)).filter(Boolean) as Idea[];
+
+            if (updatedIdeas.length > 0) {
+                setIdeas(prev => prev.map(idea => {
+                    const updated = updatedIdeas.find(u => u.id === idea.id);
+                    return updated || idea;
+                }));
+            }
+
+        } catch (e) {
+            console.error("Vetting failed:", e);
+            alert("Failed to vet ideas. Please check your AI settings.");
+            // Don't close modal, let user retry or select other criteria
+        } finally {
+            setIsVetting(false);
+        }
+    };
+
+    const handleDeleteVettedIdea = async (ideaId: string) => {
+        try {
+            await dbService.deleteIdea(ideaId);
+            setIdeas(prev => prev.filter(i => i.id !== ideaId));
+            setVettingResults(prev => prev.filter(r => r.ideaId !== ideaId));
+        } catch (e) {
+            console.error("Failed to delete vetted idea:", e);
+            alert("Failed to delete idea.");
+        }
+    };
+
     const getWinningIdeaTitle = () => {
         if (!mvpResult) return "";
         const idea = ideas.find(i => i.id === mvpResult.ideaId);
@@ -500,6 +584,14 @@ export const Home: React.FC = () => {
                             >
                                 <Sparkles size={16} className={analyzingMVP ? "dot-animate" : ""} />
                                 {analyzingMVP ? 'Analyzing...' : 'Find Simplest MVP'}
+                            </button>
+                            <button
+                                className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-amber-500/10 hover:border-amber-500 hover:text-amber-500 transition-all ${(isVetting || filteredIdeas.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer opacity-100'}`}
+                                onClick={handleVetIdeas}
+                                disabled={isVetting || filteredIdeas.length === 0}
+                            >
+                                <AlertTriangle size={16} className={isVetting ? "dot-animate" : ""} />
+                                {isVetting ? 'Vetting...' : 'Vet Ideas'}
                             </button>
                             <button
                                 className="text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-accent/5 hover:border-accent hover:text-accent transition-all"
@@ -777,6 +869,17 @@ export const Home: React.FC = () => {
                         onApply={handleApplySmartOrganize}
                     />
 
+                    <VettingModal
+                        isOpen={showVettingModal}
+                        loading={isVetting}
+                        results={vettingResults}
+                        ideas={ideas}
+                        currentCriteria={currentCriteria}
+                        onClose={() => setShowVettingModal(false)}
+                        onDelete={handleDeleteVettedIdea}
+                        onRunVetting={handleRunVetting}
+                    />
+
                     <ConfirmModal
                         isOpen={showDeleteModal}
                         title="Delete Idea"
@@ -817,6 +920,6 @@ export const Home: React.FC = () => {
                     )}
                 </div>
             </div>
-        </div>
+        </div >
     );
 };

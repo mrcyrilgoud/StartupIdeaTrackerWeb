@@ -1,4 +1,4 @@
-import { AppSettings, Idea, ChatMessage } from '../types';
+import { AppSettings, Idea, ChatMessage, VettingCriteria, VettingResult } from '../types';
 
 export interface GeneratedIdea {
     title: string;
@@ -8,6 +8,14 @@ export interface GeneratedIdea {
 export interface MVPAnalysisResult {
     ideaId: string;
     reason: string;
+}
+
+export interface Analysis {
+    analysis: string;
+    market?: string;
+    product?: string;
+    acquisition?: string;
+    monetization?: string;
 }
 
 export interface FolderSuggestion {
@@ -193,6 +201,121 @@ export const aiService = {
                 description: item.description || "",
                 ideaIds: Array.isArray(item.ideaIds) ? item.ideaIds : []
             }));
+        } catch (e) {
+            console.error("Failed to parse AI response as JSON", responseText);
+            throw new Error("AI response was not valid JSON");
+        }
+    },
+
+    async vetIdeas(ideas: Idea[], criteria: VettingCriteria, settings: AppSettings): Promise<VettingResult[]> {
+        const now = Date.now();
+        const CACHE_DURATION = 8 * 60 * 60 * 1000; // 8 hours
+
+        // 1. Identify valid cached results
+        const cachedResults: VettingResult[] = [];
+        const ideasToProcess: Idea[] = [];
+
+        ideas.forEach(idea => {
+            const cached = idea.vetting?.[criteria];
+            if (cached && (now - cached.timestamp < CACHE_DURATION)) {
+                cachedResults.push(cached);
+            } else {
+                ideasToProcess.push(idea);
+            }
+        });
+
+        // 2. If no new ideas to process, return cached immediately
+        if (ideasToProcess.length === 0) {
+            return cachedResults;
+        }
+
+        // 3. Process only new ideas
+        const ideasContext = ideasToProcess.map(idea => `ID: ${idea.id}\nTitle: ${idea.title}\nDetails: ${idea.details}`).join('\n\n');
+
+        let criteriaPrompt = '';
+
+        switch (criteria) {
+            case 'realism':
+                criteriaPrompt = `
+                Analyze for REALISM and FEASIBILITY.
+                Assign a score from 1 to 10:
+                - 1 = Completely unrealistic, physically impossible, sci-fi (e.g., "Teleportation device").
+                - 10 = Very realistic, easily buildable with current tech.
+                Identify ideas that are UNREALISTIC (Score < 6).
+                `;
+                break;
+            case 'creativity':
+                criteriaPrompt = `
+                Analyze for CREATIVITY and NOVELTY.
+                Assign a score from 1 to 10:
+                - 1 = Boring, cliché, already exists everywhere (e.g., "Another To-Do list").
+                - 10 = Highly innovative, novel, "blue ocean" idea.
+                Identify ideas that are BORING/CLICHÉ (Score < 6).
+                `;
+                break;
+            case 'uniqueness':
+                criteriaPrompt = `
+                Analyze for UNIQUENESS and MARKET SATURATION.
+                Assign a score from 1 to 10:
+                - 1 = Highly saturated, generic, commodity (e.g., "T-shirt dropshipping").
+                - 10 = Unique value proposition, solves a new problem.
+                Identify ideas that are GENERIC (Score < 6).
+                `;
+                break;
+            case 'legality':
+                criteriaPrompt = `
+                Analyze for LEGALITY and ETHICS.
+                Assign a score from 1 to 10:
+                - 1 = Clearly illegal, dangerous, scams, or highly unethical (e.g., "Pyramid scheme", "Weapon manufacturing").
+                - 10 = Completely legal and ethical.
+                Identify ideas that are ILLEGAL/UNETHICAL (Score < 6).
+                `;
+                break;
+        }
+
+        const prompt = `
+        ${criteriaPrompt}
+
+        Ideas:
+        ${ideasContext}
+
+        Strictly output the result as a valid JSON array of objects with the following keys:
+        - "ideaId": The ID of the idea.
+        - "score": Number (1-10).
+        - "reason": A short explanation of why it has this score.
+
+        Return results for ALL these ideas (${ideasToProcess.length}).
+        Do NOT include any markdown formatting or code fences. Return ONLY the raw JSON array.
+        `;
+
+        const responseText = await this.generateResponse(prompt, settings, true, true);
+
+        try {
+            const firstBracket = responseText.indexOf('[');
+            const lastBracket = responseText.lastIndexOf(']');
+
+            if (firstBracket === -1 || lastBracket === -1) {
+                throw new Error("No JSON array found in response");
+            }
+
+            const jsonCandidate = responseText.substring(firstBracket, lastBracket + 1);
+            const parsed = JSON.parse(jsonCandidate);
+
+            if (!Array.isArray(parsed)) {
+                throw new Error("AI response is not an array");
+            }
+
+            const newResults: VettingResult[] = parsed.map((item: any) => ({
+                ideaId: item.ideaId,
+                criteria: criteria,
+                score: Number(item.score || item.realityScore) || 5, // Support legacy realityScore just in case cached/AI hallucination
+                reason: item.reason || "No reason provided",
+                timestamp: Date.now()
+            }));
+
+            // Return merged results
+            return [...cachedResults, ...newResults];
+
         } catch (e) {
             console.error("Failed to parse AI response as JSON", responseText);
             throw new Error("AI response was not valid JSON");
