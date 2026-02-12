@@ -25,21 +25,32 @@ export interface FolderSuggestion {
 }
 
 export const aiService = {
-    async generateResponse(prompt: string, settings: AppSettings, thinking: boolean = false, jsonMode: boolean = false): Promise<string> {
+    async generateResponse(prompt: string, settings: AppSettings, thinking: boolean = false, jsonMode: boolean = false, image?: string): Promise<string> {
         if (settings.provider === 'gemini') {
-            return this.generateGemini(prompt, settings.geminiKey, thinking, jsonMode);
+            return this.generateGemini(prompt, settings.geminiKey, thinking, jsonMode, image);
         } else {
             return this.generateOllama(prompt, settings, jsonMode);
         }
     },
 
-    async generateGemini(prompt: string, apiKey: string, thinking: boolean = false, jsonMode: boolean = false): Promise<string> {
+    async generateGemini(prompt: string, apiKey: string, thinking: boolean = false, jsonMode: boolean = false, image?: string): Promise<string> {
         // Use thinking model if requested, otherwise standard verified model
         const model = thinking ? 'gemini-2.5-pro' : 'gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
+        const parts: any[] = [{ text: prompt }];
+
+        if (image) {
+            parts.push({
+                inlineData: {
+                    mimeType: "image/png",
+                    data: image
+                }
+            });
+        }
+
         const body: any = {
-            contents: [{ parts: [{ text: prompt }] }]
+            contents: [{ parts: parts }]
         };
 
         if (jsonMode) {
@@ -85,7 +96,7 @@ export const aiService = {
         return data.response;
     },
 
-    async generateIdeas(prompt: string, settings: AppSettings): Promise<GeneratedIdea[]> {
+    async generateIdeas(prompt: string, settings: AppSettings, image?: string): Promise<GeneratedIdea[]> {
         const jsonPrompt = `
         ${prompt}
         
@@ -96,7 +107,7 @@ export const aiService = {
         Do NOT include any markdown formatting or code fences (like \`\`\`json). Return ONLY the raw JSON array.
         `;
 
-        const responseText = await this.generateResponse(jsonPrompt, settings, true, true); // Use thinking/smart model + jsonMode
+        const responseText = await this.generateResponse(jsonPrompt, settings, true, true, image); // Use thinking/smart model + jsonMode
 
         try {
             // Find the first '[' and last ']' to extract valid JSON array

@@ -226,17 +226,25 @@ export const IdeaSpark: React.FC = () => {
                 I am a founder with a "${vibe}" vibe looking to build in "${field}".
                 My startup spirit animal is a "${spirit}" and my style of disruption is "${disruption}".
                 I was given the creative prompt: "${activePrompt}".
-                I drew a picture that signifies: "${drawingDescription}".
+                
+                I have also attached a drawing I made that relates to this prompt.
+                My description of the drawing is: "${drawingDescription}".
                 
                 CONSTRAINT: The idea ${wildConstraint}.
                 
-                Based on this eclectic mix of personality and abstract creative input, 
+                Based on this eclectic mix of personality, the visual drawing provided, and abstract creative input, 
                 generate 3 wildly creative, out-of-the-box startup ideas.
                 Make them unique, slightly unconventional, and risky.
-                Explain how the constraint influenced the idea.
+                Explain how the constraint and the drawing influenced the idea.
             `;
 
-            const ideas = await aiService.generateIdeas(prompt, settings);
+            // Capture image from canvas
+            let image = undefined;
+            if (canvasRef.current) {
+                image = canvasRef.current.toDataURL('image/png').split(',')[1];
+            }
+
+            const ideas = await aiService.generateIdeas(prompt, settings, image); // Pass image
             setGeneratedIdeas(ideas);
             setStage('results');
         } catch (e) {
