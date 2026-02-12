@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { dbService } from '../services/db';
 import { AppSettings } from '../types';
 import { useTheme } from '../context/ThemeContext';
-import { Sun, Moon, Monitor } from 'lucide-react';
+import { Sun, Moon, Monitor, FolderInput } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
     const { theme, setTheme } = useTheme();
@@ -10,7 +10,11 @@ export const SettingsPage: React.FC = () => {
         provider: 'gemini',
         geminiKey: '',
         ollamaEndpoint: 'http://localhost:11434',
-        ollamaModel: 'llama3'
+        ollamaModel: 'llama3',
+        editorCommand: 'cursor',
+        agentProvider: 'custom',
+        agentCommand: '',
+        projectsBaseDir: '../'
     });
     const [saved, setSaved] = useState(false);
 
@@ -126,6 +130,105 @@ export const SettingsPage: React.FC = () => {
                 )}
 
                 <div className="pt-4 border-t border-border">
+                    <h3 className="text-xl mb-4 font-semibold">Local Agent Integration</h3>
+                    <div className="flex flex-col gap-4">
+                        <div>
+                            <label className="block mb-2 font-medium">Projects Base Directory</label>
+                            <div className="flex gap-2">
+                                <div className="relative flex-1">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-text-secondary">
+                                        <FolderInput size={18} />
+                                    </div>
+                                    <input
+                                        className="input pl-10"
+                                        type="text"
+                                        value={settings.projectsBaseDir || '../'}
+                                        readOnly
+                                        placeholder="/Users/name/startups/"
+                                    />
+                                </div>
+                                <button
+                                    className="btn-primary whitespace-nowrap"
+                                    onClick={async () => {
+                                        const path = await dbService.selectBaseDirectory();
+                                        if (path) {
+                                            handleChange('projectsBaseDir', path);
+                                        }
+                                    }}
+                                >
+                                    Browse...
+                                </button>
+                            </div>
+                            <p className="text-xs text-text-secondary mt-1">Default location where new project folders will be created.</p>
+                        </div>
+                        <div>
+                            <label className="block mb-2 font-medium">Editor Command</label>
+                            <input
+                                className="input"
+                                type="text"
+                                value={settings.editorCommand || 'cursor'}
+                                onChange={(e) => handleChange('editorCommand', e.target.value)}
+                                placeholder="code, cursor, atom, etc."
+                            />
+                            <p className="text-xs text-text-secondary mt-1">Command to open your editor (e.g. <code>code .</code> or <code>cursor .</code>)</p>
+                        </div>
+
+                        <div>
+                            <label className="block mb-2 font-medium">Agent Provider</label>
+                            <select
+                                className="input"
+                                value={settings.agentProvider || 'custom'}
+                                onChange={(e) => {
+                                    const provider = e.target.value as any;
+                                    let defaultCommand = settings.agentCommand;
+
+                                    switch (provider) {
+                                        case 'opencode':
+                                            defaultCommand = 'opencode run "Build MVP from PROMPT.md"';
+                                            break;
+                                        case 'aider':
+                                            defaultCommand = 'aider --message "Build MVP from PROMPT.md" --auto-commits --test-cmd "npm run build"';
+                                            break;
+                                        case 'goose':
+                                            defaultCommand = 'goose run --instruction-file PROMPT.md';
+                                            break;
+                                        case 'gemini':
+                                            defaultCommand = 'gemini prompt PROMPT.md';
+                                            break;
+                                        case 'copilot':
+                                            defaultCommand = 'gh copilot suggest -t shell < PROMPT.md';
+                                            break;
+                                    }
+                                    setSettings(prev => ({ ...prev, agentProvider: provider, agentCommand: defaultCommand }));
+                                    setSaved(false);
+                                }}
+                            >
+                                <option value="custom">Custom</option>
+                                <option value="opencode">OpenCode</option>
+                                <option value="aider">Aider</option>
+                                <option value="goose">Goose</option>
+                                <option value="gemini">Gemini CLI</option>
+                                <option value="copilot">GitHub Copilot CLI</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block mb-2 font-medium">Agent Launch Command</label>
+                            <input
+                                className="input"
+                                type="text"
+                                value={settings.agentCommand || ''}
+                                onChange={(e) => handleChange('agentCommand', e.target.value)}
+                                placeholder="Command to run agent..."
+                            />
+                            <p className="text-xs text-text-secondary mt-1">
+                                This command will be executed in a new Terminal window. Ensure the tool is installed in your PATH.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="pt-4 border-t border-border">
                     <h3 className="text-xl mb-4 font-semibold">Data Management</h3>
                     <div className="flex flex-col gap-4 sm:flex-row">
                         <button
@@ -166,7 +269,6 @@ export const SettingsPage: React.FC = () => {
                         </label>
                     </div>
                 </div>
-
                 <div className="pt-4 border-t border-border">
                     <button className="btn-primary" onClick={save}>
                         {saved ? 'Saved!' : 'Save Settings'}

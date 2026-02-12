@@ -60,4 +60,8 @@ export interface AppSettings {
   geminiKey: string;
   ollamaEndpoint: string;
   ollamaModel: string;
+  editorCommand: string;
+  agentProvider: 'custom' | 'opencode' | 'goose' | 'gemini' | 'copilot' | 'aider';
+  agentCommand: string;
+  projectsBaseDir: string;
 }

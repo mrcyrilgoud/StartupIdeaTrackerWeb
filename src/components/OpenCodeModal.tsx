@@ -11,18 +11,59 @@ interface OpenCodeModalProps {
 export const OpenCodeModal: React.FC<OpenCodeModalProps> = ({ isOpen, onClose, idea }) => {
     const [copied, setCopied] = useState(false);
 
+    const [isCreating, setIsCreating] = useState(false);
+    const [settings, setSettings] = React.useState<any>(null);
+
     // State for user inputs
     const [projectName, setProjectName] = useState('');
-    const [parentPath, setParentPath] = useState('../');
+    const [parentPath, setParentPath] = useState('');
     const [includeDirectorySetup, setIncludeDirectorySetup] = useState(true);
 
-    // Initialize project name from idea title when modal opens
     useEffect(() => {
         if (isOpen && idea.title) {
             const sanitized = idea.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
             setProjectName(`${sanitized}-mvp`);
         }
     }, [isOpen, idea.title]);
+
+    useEffect(() => {
+        // Load settings to get agent configuration
+        import('../services/db').then(m => m.dbService.getSettings().then(s => {
+            setSettings(s);
+            if (s.projectsBaseDir) {
+                setParentPath(s.projectsBaseDir);
+            } else {
+                setParentPath('../');
+            }
+        }));
+    }, [isOpen]);
+
+    const handleCreateProject = async () => {
+        if (!settings) return;
+        setIsCreating(true);
+        try {
+            const { dbService } = await import('../services/db');
+
+            // Prepare commands based on settings
+            // const loopMode = includeDirectorySetup; // Reuse this toggle for "Loop Mode" context if needed
+
+
+            await dbService.createProject({
+                path: parentPath,
+                projectName: projectName,
+                prompt: prompt,
+                editorCommand: settings.editorCommand,
+                agentCommand: settings.agentCommand
+            });
+
+            alert(`Project '${projectName}' created! Agent terminal spawned.`);
+            onClose();
+        } catch (error: any) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsCreating(false);
+        }
+    };
 
     if (!isOpen) return null;
 
@@ -155,13 +196,27 @@ ${directoryInstructions}
                     </button>
                 </div>
 
-                <div className="flex justify-end">
-                    <button
-                        onClick={onClose}
-                        className="btn-primary"
-                    >
-                        Done
-                    </button>
+                <div className="flex justify-between items-center bg-background/50 p-4 rounded-xl border border-border">
+                    <div className="text-sm">
+                        <span className="font-semibold text-text-primary">Agent: </span>
+                        <span className="text-text-secondary">{settings?.agentProvider ? settings.agentProvider.toUpperCase() : 'NONE'}</span>
+                    </div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={onClose}
+                            className="bg-transparent border border-border text-text-secondary px-4 py-2 rounded-lg hover:bg-background/80"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleCreateProject}
+                            disabled={isCreating}
+                            className={`btn-primary flex items-center gap-2 ${isCreating ? 'opacity-70 cursor-not-allowed' : ''}`}
+                        >
+                            <Terminal size={16} />
+                            {isCreating ? 'Launching Agent...' : 'Create & Launch'}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

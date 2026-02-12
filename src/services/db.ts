@@ -140,18 +140,61 @@ export const dbService = {
 
     async getSettings(): Promise<AppSettings> {
         const stored = localStorage.getItem('app-settings');
-        if (stored) return JSON.parse(stored);
+        if (stored) {
+            const settings = JSON.parse(stored);
+            // Auto-migration to ensure we use the correct 'opencode run' command for autonomous execution
+            if (settings.agentCommand && (
+                settings.agentCommand.includes('opencode loop') ||
+                settings.agentCommand.includes('--goal') ||
+                settings.agentCommand.includes('opencode .')
+            )) {
+                // Reset to the valid autonomous command
+                settings.agentCommand = 'opencode run "Build MVP from PROMPT.md"';
+                localStorage.setItem('app-settings', JSON.stringify(settings));
+            }
+            return settings;
+        }
 
         return {
             provider: 'gemini',
             geminiKey: '',
             ollamaEndpoint: 'http://localhost:11434',
-            ollamaModel: 'llama3'
+            ollamaModel: 'llama3',
+            editorCommand: 'cursor',
+            agentProvider: 'custom',
+            agentCommand: '',
+            projectsBaseDir: '../'
         };
     },
 
     async saveSettings(settings: AppSettings): Promise<void> {
         localStorage.setItem('app-settings', JSON.stringify(settings));
+    },
+
+    async createProject(data: { path: string; projectName: string; prompt: string; editorCommand?: string; agentCommand?: string }): Promise<void> {
+        const response = await fetch(`${API_BASE_URL}/api/create-project`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `Failed to create project: ${response.statusText}`);
+        }
+    },
+
+    async selectBaseDirectory(): Promise<string | null> {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/select-folder`);
+            if (!response.ok) throw new Error('Failed to open folder picker');
+            const data = await response.json();
+            if (data.cancelled) return null;
+            return data.path;
+        } catch (error) {
+            console.error('Error selecting folder:', error);
+            return null;
+        }
     },
 
     async exportAllData(): Promise<string> {
