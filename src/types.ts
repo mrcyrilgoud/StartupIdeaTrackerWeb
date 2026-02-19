@@ -5,6 +5,22 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  timestamp: number;
+}
+
+export type VettingCriteria = 'realism' | 'creativity' | 'uniqueness' | 'legality';
+
+export interface VettingResult {
+  ideaId: string;
+  criteria: VettingCriteria;
+  score: number;
+  reason: string;
+  timestamp: number;
+}
+
 export interface Idea {
   id: string;
   title: string;
@@ -15,6 +31,8 @@ export interface Idea {
   chatHistory: ChatMessage[];
   relatedIdeaIds: string[];
   status: 'draft' | 'validation' | 'mvp' | 'completed' | 'archived';
+  folderId?: string;
+  vetting?: Partial<Record<VettingCriteria, VettingResult>>;
 }
 
 export type IdeaStatus = Idea['status'];

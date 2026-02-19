@@ -26,7 +26,7 @@ export const OpenCodeModal: React.FC<OpenCodeModalProps> = ({ isOpen, onClose, i
 
     if (!isOpen) return null;
 
-    const fullPath = `${parentPath.replace(/\/$/, '')}/${projectName}`;
+    const fullPath = `${parentPath.replace(/\/+$/, '')}/${projectName}`;
 
     const directoryInstructions = includeDirectorySetup
         ? `   - Create a new directory at: '${fullPath}'
@@ -58,6 +58,8 @@ ${directoryInstructions}
             setTimeout(() => setCopied(false), 2000);
         } catch (err) {
             console.error('Failed to copy text: ', err);
+            // Fallback for non-secure contexts or failures
+            alert('Failed to copy to clipboard. Please select and copy the text manually.');
         }
     };
 

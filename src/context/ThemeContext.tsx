@@ -31,17 +31,24 @@ export function ThemeProvider({
 
     useEffect(() => {
         const root = window.document.documentElement;
-
         root.classList.remove('light', 'dark');
 
         if (theme === 'system') {
-            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
-                .matches
-                ? 'dark'
-                : 'light';
+            const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
-            root.classList.add(systemTheme);
-            return;
+            const applySystemTheme = () => {
+                const systemTheme = mediaQuery.matches ? 'dark' : 'light';
+                root.classList.remove('light', 'dark');
+                root.classList.add(systemTheme);
+            };
+
+            applySystemTheme();
+
+            mediaQuery.addEventListener('change', applySystemTheme);
+
+            return () => {
+                mediaQuery.removeEventListener('change', applySystemTheme);
+            };
         }
 
         root.classList.add(theme);

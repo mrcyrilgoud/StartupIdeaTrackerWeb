@@ -30,6 +30,26 @@ const QUESTIONS = [
             { id: 'sustainability', label: 'Green Earth', icon: '🌱' },
             { id: 'weird', label: 'Something Weird', icon: '👾' }
         ]
+    },
+    {
+        id: 'spirit_animal',
+        question: 'Choose your startup spirit animal:',
+        options: [
+            { id: 'honey_badger', label: 'Honey Badger', icon: '🦡' },
+            { id: 'unicorn', label: 'Unicorn', icon: '🦄' },
+            { id: 'octopus', label: 'Octopus', icon: '🐙' },
+            { id: 'phoenix', label: 'Phoenix', icon: '🔥' }
+        ]
+    },
+    {
+        id: 'disruption',
+        question: 'Preferred mode of disruption?',
+        options: [
+            { id: 'explosion', label: 'Loud Explosion', icon: '💥' },
+            { id: 'wildfire', label: 'Wildfire', icon: '🌲' },
+            { id: 'trojan', label: 'Trojan Horse', icon: '🐴' },
+            { id: 'cult', label: 'Cult Following', icon: '🕯️' }
+        ]
     }
 ];
 
@@ -41,7 +61,41 @@ const PROMPTS = [
     "A vehicle that runs on laughter",
     "A vegetable with a secret identity",
     "Architecture for a colony of ants",
-    "A clock that measures moments, not time"
+    "A clock that measures moments, not time",
+    "A vending machine for lost dreams",
+    "Shoes that leave footprints of the future",
+    "A social network for ghosts",
+    "A kitchen appliance that cooks enhanced emotions",
+    "Sunglasses that show you the world 50 years from now",
+    "A musical instrument played by wind and silence",
+    "A backpack that carries your worries for you",
+    "A chair that hugs you back",
+    "A telescope for viewing alternate realities",
+    "A plant that grows improved wifi signals",
+    "A dating app for time travelers",
+    "Bicycles designed for deep sea exploration",
+    "A translation device for talking to house plants",
+    "A gym for exercising your creativity",
+    "A library where books read to you",
+    "A map of places that don't exist yet",
+    "A robot that only does useless things perfectly",
+    "An alarm clock that wakes you with compliments",
+    "A suitcase that packs itself but always forgets one thing"
+];
+
+const WILD_CONSTRAINTS = [
+    "Must be usable by a cat",
+    "Cannot require electricity",
+    "Must fit in a pocket",
+    "Target audience is people over 100 years old",
+    "Must involve inflatable components",
+    "Service must be delivered via drone",
+    "Must be edible",
+    "Uses technology from the 19th century",
+    "Must cost exactly $1 to produce",
+    "Must be underwater compatible",
+    "Operates only at night",
+    "Requires two people to use simultaneously"
 ];
 
 const DRAWING_TIME = 45; // seconds
@@ -162,18 +216,35 @@ export const IdeaSpark: React.FC = () => {
         try {
             const vibe = answers['vibe'] || 'Unknown';
             const field = answers['field'] || 'General';
+            const spirit = answers['spirit_animal'] || 'Unknown';
+            const disruption = answers['disruption'] || 'Unknown';
+
+            // Pick a random wild constraint
+            const wildConstraint = WILD_CONSTRAINTS[Math.floor(Math.random() * WILD_CONSTRAINTS.length)];
 
             const prompt = `
                 I am a founder with a "${vibe}" vibe looking to build in "${field}".
+                My startup spirit animal is a "${spirit}" and my style of disruption is "${disruption}".
                 I was given the creative prompt: "${activePrompt}".
-                I drew a picture that signifies: "${drawingDescription}".
                 
-                Based on this eclectic mix of personality and abstract creative input, 
+                I have also attached a drawing I made that relates to this prompt.
+                My description of the drawing is: "${drawingDescription}".
+                
+                CONSTRAINT: The idea ${wildConstraint}.
+                
+                Based on this eclectic mix of personality, the visual drawing provided, and abstract creative input, 
                 generate 3 wildly creative, out-of-the-box startup ideas.
-                Make them unique and slightly unconventional.
+                Make them unique, slightly unconventional, and risky.
+                Explain how the constraint and the drawing influenced the idea.
             `;
 
-            const ideas = await aiService.generateIdeas(prompt, settings);
+            // Capture image from canvas
+            let image = undefined;
+            if (canvasRef.current) {
+                image = canvasRef.current.toDataURL('image/png').split(',')[1];
+            }
+
+            const ideas = await aiService.generateIdeas(prompt, settings, image); // Pass image
             setGeneratedIdeas(ideas);
             setStage('results');
         } catch (e) {

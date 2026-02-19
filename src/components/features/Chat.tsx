@@ -230,7 +230,13 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             };
             onChatUpdate([...idea.chatHistory, aiMsg]);
         } catch (error) {
-            alert('Failed to generate plan');
+            const errorMsg: ChatMessage = {
+                id: uuidv4(),
+                role: 'system',
+                content: `Failed to generate plan: ${(error as Error).message}`,
+                timestamp: Date.now()
+            };
+            onChatUpdate([...idea.chatHistory, errorMsg]);
         } finally {
             setLoading(false);
         }
