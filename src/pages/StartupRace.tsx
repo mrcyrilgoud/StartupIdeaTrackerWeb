@@ -1,64 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Rocket, Skull, Zap, Play, RotateCcw, Trophy, Timer, Car, Heart, DollarSign } from 'lucide-react';
+import { Skull, Zap, RotateCcw, Car, Heart, DollarSign, Shield } from 'lucide-react';
 import { aiService } from '../services/ai';
 import { dbService } from '../services/db';
-import { AppSettings, Idea } from '../types';
+import { AppSettings, Idea, GeneratedIdea } from '../types';
 import { GeneratedIdeaCard } from '../components/GeneratedIdeaCard';
 import { v4 as uuidv4 } from 'uuid';
 
-// -- Constants --
-const CANVAS_WIDTH = 800; // Wider for better perspective
-const CANVAS_HEIGHT = 600;
-const PLAYER_SIZE = 50;
-const OBSTACLE_SIZE = 60; // Increased size for visibility
-const ITEM_SIZE = 50;
-const LANE_COUNT = 5;
-const LANE_WIDTH = (CANVAS_WIDTH * 0.8) / LANE_COUNT; // Playable area is 80%
-
-// Themes (Mario Kart Style Levels)
-interface TrackTheme {
-    name: string;
-    skyColor: string;
-    roadColor: string;
-    grassColor: string;
-    stripeColor: string;
-    accentColor: string;
-}
-
-const THEMES: TrackTheme[] = [
-    { name: 'Seed Valley', skyColor: '#38bdf8', roadColor: '#475569', grassColor: '#22c55e', stripeColor: '#ffffff', accentColor: '#facc15' }, // Brighter road
-    { name: 'Series A City', skyColor: '#a855f7', roadColor: '#1e293b', grassColor: '#f472b6', stripeColor: '#fde047', accentColor: '#c084fc' }, // Vaporwave
-    { name: 'Unicorn Sky', skyColor: '#fbcfe8', roadColor: '#e0f2fe', grassColor: '#bae6fd', stripeColor: '#ec4899', accentColor: '#818cf8' }, // Pastel
-    { name: 'IPO Circuit', skyColor: '#fbbf24', roadColor: '#171717', grassColor: '#dc2626', stripeColor: '#fbbf24', accentColor: '#ffffff' }  // Intense
-];
-
-// Assets
-const OBSTACLES = [
-    { type: 'bug', char: '🐛', label: 'Bug' },
-    { type: 'debt', char: '🧱', label: 'Blocker' },
-    { type: 'lawsuit', char: '⚖️', label: 'Lawsuit' },
-    { type: 'competitor', char: '🏎️', label: 'Competitor' }
-];
-
-const COLLECTIBLES = [
-    { type: 'idea', char: '💡', value: 2, label: 'Insight' }, // Small boost
-    { type: 'coffee', char: '☕', value: 1, label: 'Energy' },
-    { type: 'money', char: '💰', value: 5, label: 'Funding' }, // BIG VALUATION BOOST
-    { type: 'user', char: '❤️', value: 0, label: 'Traction' } // HEALS RUNWAY
-];
-
-type GameState = 'intro' | 'playing' | 'crashed' | 'generating' | 'results';
-
-interface GameObject {
-    id: string;
-    lane: number; // Use lanes for logic, X for render
-    y: number; // 0 to 1000 (virtual depth)
-    type: string;
-    char: string;
-    speed: number;
-    label?: string;
-}
+// -- Constants & Types --
+import {
+    CANVAS_WIDTH, CANVAS_HEIGHT, LANE_COUNT,
+    THEMES, OBSTACLES, COLLECTIBLES
+} from '../utils/gameConstants';
+import { GameState, GameObject } from '../types/gameTypes';
+import { soundManager } from '../utils/SoundManager';
 
 export const StartupRace: React.FC = () => {
     // -- State --
@@ -68,13 +23,16 @@ export const StartupRace: React.FC = () => {
     const [timeSurvived, setTimeSurvived] = useState(0);
     const [currentLevel, setCurrentLevel] = useState(0);
     const [runway, setRunway] = useState(100); // 0-100%
+    const [shieldActive, setShieldActive] = useState(false);
 
     const collectedItemsRef = useRef<string[]>([]);
     const themesVisitedRef = useRef<Set<string>>(new Set());
 
-    const [generatedIdeas, setGeneratedIdeas] = useState<{ title: string, details: string }[]>([]);
+    const [generatedIdeas, setGeneratedIdeas] = useState<GeneratedIdea[]>([]);
+
+    // Game Logic Refs
     const [settings, setSettings] = useState<AppSettings | null>(null);
-    const [error, setError] = useState('');
+    const [crashCause, setCrashCause] = useState('');
 
     // Game Loop Refs
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -84,6 +42,7 @@ export const StartupRace: React.FC = () => {
     const playingRef = useRef(false);
     const scoreRef = useRef(0);
     const runwayRef = useRef(100);
+    const shieldRef = useRef(false);
 
     // Movement Physics
     const playerLane = useRef(2); // 0-4
@@ -95,6 +54,7 @@ export const StartupRace: React.FC = () => {
     const collectibles = useRef<GameObject[]>([]);
     const projectiles = useRef<{ id: string; x: number; y: number; speed: number; color: string }[]>([]);
     const particles = useRef<{ id: string; x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }[]>([]);
+    const speedLines = useRef<{ x: number; y: number; speed: number; length: number }[]>([]);
 
     const speedMultiplier = useRef(1);
     const startTime = useRef(0);
@@ -129,8 +89,11 @@ export const StartupRace: React.FC = () => {
         collectibles.current = [];
         projectiles.current = [];
         particles.current = [];
+        speedLines.current = [];
 
         speedMultiplier.current = 1;
+        shieldRef.current = false;
+        setShieldActive(false);
         playerLane.current = 2; // Center
         playerX.current = getLaneCenter(2);
         targetPlayerX.current = getLaneCenter(2);
@@ -147,7 +110,9 @@ export const StartupRace: React.FC = () => {
     };
 
     const handleCrash = (cause: string) => {
+        soundManager.playCrash();
         stopGame();
+        setCrashCause(cause);
         setGameState('crashed');
         setHighScore(prev => Math.max(prev, scoreRef.current));
         setScore(scoreRef.current);
@@ -189,6 +154,7 @@ export const StartupRace: React.FC = () => {
 
     const shoot = () => {
         if (!playingRef.current) return;
+        soundManager.playShoot();
         projectiles.current.push({
             id: uuidv4(),
             x: playerX.current,
@@ -212,11 +178,6 @@ export const StartupRace: React.FC = () => {
         }
     };
 
-    const spawnFloatingText = (x: number, y: number, text: string, color: string) => {
-        // Simple visual feedback could be particles or specific text list
-        // For now, we reuse particles but maybe just sparklies
-    };
-
     const gameLoop = useCallback(() => {
         if (!playingRef.current) return;
 
@@ -234,6 +195,7 @@ export const StartupRace: React.FC = () => {
             levelRef.current = newLevel;
             setCurrentLevel(newLevel);
             themesVisitedRef.current.add(THEMES[newLevel].name);
+            soundManager.playLevelUp();
         }
 
         const theme = THEMES[levelRef.current];
@@ -254,6 +216,16 @@ export const StartupRace: React.FC = () => {
 
         // Smooth Player Movement
         playerX.current = playerX.current + (targetPlayerX.current - playerX.current) * 0.15;
+
+        // Speed Lines Generation
+        if (speedMultiplier.current > 1.2 && Math.random() > 0.7) {
+            speedLines.current.push({
+                x: (Math.random() - 0.5) * CANVAS_WIDTH * 1.5 + CANVAS_WIDTH / 2,
+                y: 0,
+                speed: 20 * speedMultiplier.current + Math.random() * 10,
+                length: 10 + Math.random() * 20
+            });
+        }
 
         // Draw Background
         ctx.fillStyle = theme.skyColor;
@@ -367,13 +339,26 @@ export const StartupRace: React.FC = () => {
                 const dx = Math.abs(playerX.current - proj.x);
                 if (dx < 40) { // Hitbox
                     if (obj.type === 'obstacle') {
-                        handleCrash(obj.label || 'Crash');
-                        return;
+                        if (shieldRef.current) {
+                            shieldRef.current = false;
+                            setShieldActive(false);
+                            soundManager.playCrash(); // Shield break sound
+                            spawnExplosion(proj.x, proj.y, '#3b82f6');
+                            obstacles.current = obstacles.current.filter(o => o.id !== obj.id);
+                        } else {
+                            handleCrash(obj.label || 'Crash');
+                            return;
+                        }
                     } else {
                         // Collect
                         const colItem = COLLECTIBLES.find(c => c.char === obj.char);
                         if (colItem) {
-                            if (colItem.label === 'Traction') { // Heart
+                            soundManager.playCollect(true);
+                            if (colItem.type === 'shield') {
+                                shieldRef.current = true;
+                                setShieldActive(true);
+                                spawnExplosion(proj.x, proj.y, '#3b82f6');
+                            } else if (colItem.label === 'Traction') { // Heart
                                 runwayRef.current = Math.min(100, runwayRef.current + 20); // Heal
                                 spawnExplosion(proj.x, proj.y, '#ec4899');
                             } else if (colItem.label === 'Funding') { // Money
@@ -439,6 +424,18 @@ export const StartupRace: React.FC = () => {
         ctx.fillStyle = theme.accentColor;
         ctx.shadowColor = 'rgba(0,0,0,0.5)';
         ctx.shadowBlur = 20;
+
+        // Shield Aura
+        if (shieldRef.current) {
+            ctx.beginPath();
+            ctx.arc(0, 0, 45, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(59, 130, 246, 0.4)'; // Blue transparent
+            ctx.fill();
+            ctx.strokeStyle = '#60a5fa';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
+
         ctx.beginPath();
         ctx.moveTo(0, -pSize / 2);
         ctx.lineTo(pSize / 2, pSize / 2);
@@ -471,6 +468,35 @@ export const StartupRace: React.FC = () => {
             ctx.fillRect(p.x, p.y, p.size, p.size);
             ctx.globalAlpha = 1.0;
         }
+
+        // Render Speed Lines
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let i = speedLines.current.length - 1; i >= 0; i--) {
+            const line = speedLines.current[i];
+
+            // Move 'y' from 0 (horizon) to 1000 (screen bottom) logic
+            line.y += line.speed;
+
+            // Project
+            const perspective = Math.pow(line.y / 1000, 3);
+            const screenY = horizonY + (line.y / 1000) * (CANVAS_HEIGHT - horizonY);
+
+            // X expands from center
+            const factor = line.y / 1000;
+            const screenX = roadCenterX + (line.x - roadCenterX) * factor;
+
+            const len = line.length * (1 + perspective * 2);
+
+            ctx.moveTo(screenX, screenY);
+            ctx.lineTo(screenX, screenY - len);
+
+            if (line.y > 1000) {
+                speedLines.current.splice(i, 1);
+            }
+        }
+        ctx.stroke();
 
         requestRef.current = requestAnimationFrame(gameLoop);
     }, []);
@@ -594,6 +620,12 @@ export const StartupRace: React.FC = () => {
                             <div className="flex items-center gap-2 text-pink-400">
                                 <Heart fill="currentColor" size={24} />
                                 <span className="text-lg">RUNWAY</span>
+                                {shieldActive && (
+                                    <div className="flex items-center gap-1 text-blue-400 ml-4 animate-pulse">
+                                        <Shield size={24} fill="currentColor" />
+                                        <span className="text-sm font-bold">SHIELD</span>
+                                    </div>
+                                )}
                             </div>
                             <div className="w-full h-4 bg-black/50 rounded-full border border-white/30 overflow-hidden">
                                 <motion.div
@@ -653,7 +685,9 @@ export const StartupRace: React.FC = () => {
                     <div className="absolute inset-0 bg-black/80 backdrop-blur flex flex-col items-center justify-center text-white text-center p-8 animate-in zoom-in duration-300">
                         <div className="text-8xl mb-4">💥</div>
                         <h2 className="text-5xl font-black mb-2 text-white">WIPEOUT!</h2>
-                        <p className="text-2xl text-yellow-300 font-bold mb-8">Final Valuation: ${score}M</p>
+                        <p className="text-xl text-red-400 font-bold mb-4 uppercase tracking-widest">{crashCause}</p>
+                        <p className="text-2xl text-yellow-300 font-bold mb-2">Final Valuation: ${score}M</p>
+                        <p className="text-lg text-slate-400 font-bold mb-8">High Valuation: ${highScore}M</p>
 
                         <div className="flex gap-4">
                             <button onClick={handleGenerate} className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 px-8 rounded-xl shadow-[0_6px_0_rgb(107,33,168)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2">

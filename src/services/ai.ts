@@ -1,9 +1,4 @@
-import { AppSettings, Idea, ChatMessage, VettingCriteria, VettingResult } from '../types';
-
-export interface GeneratedIdea {
-    title: string;
-    details: string;
-}
+import { AppSettings, Idea, ChatMessage, VettingCriteria, VettingResult, GeneratedIdea } from '../types';
 
 export interface MVPAnalysisResult {
     ideaId: string;

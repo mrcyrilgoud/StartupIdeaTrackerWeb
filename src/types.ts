@@ -61,3 +61,8 @@ export interface AppSettings {
   ollamaEndpoint: string;
   ollamaModel: string;
 }
+
+export interface GeneratedIdea {
+  title: string;
+  details: string;
+}

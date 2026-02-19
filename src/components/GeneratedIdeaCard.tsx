@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Sparkles, Check, Save } from 'lucide-react';
-import { GeneratedIdea } from '../services/ai';
+import { GeneratedIdea } from '../types';
 
 interface GeneratedIdeaCardProps {
     idea: GeneratedIdea;
