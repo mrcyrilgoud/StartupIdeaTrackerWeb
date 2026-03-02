@@ -53,6 +53,10 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     const [loading, setLoading] = useState(false);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const [isStreaming, setIsStreaming] = useState(false);
+    const [streamingContent, setStreamingContent] = useState('');
+
+    const safeHistory = idea.chatHistory || [];
 
     useEffect(() => {
         dbService.getSettings().then(setSettings);
@@ -60,7 +64,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [idea.chatHistory]);
+    }, [safeHistory]);
 
     const sendMessage = async () => {
         if (!input.trim()) return;
@@ -73,7 +77,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         };
 
         // Optimistic update
-        const historyWithUser = [...idea.chatHistory, userMsg];
+        const historyWithUser = [...safeHistory, userMsg];
         onChatUpdate(historyWithUser);
         setInput('');
 
@@ -88,19 +92,20 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             return;
         }
         setLoading(true);
+        setIsStreaming(true);
+        setStreamingContent('');
 
         try {
-            // We pass historyWithUser to context, but we rely on the FRESH idea from props 
-            // for the context if we needed it, but here we just need the history.
-            // Note: aiService.chat uses idea.details. If idea.details changes while this runs,
-            // that's fine for THIS request. The important thing is we don't clobber that change 
-            // when we write back the response.
-            const response = await aiService.chat(userMsg.content, historyWithUser, idea, settings);
+            let finalOutput = '';
+            await aiService.chatStream(userMsg.content, historyWithUser, idea, settings, (chunk) => {
+                finalOutput = chunk;
+                setStreamingContent(chunk);
+            });
 
             const aiMsg: ChatMessage = {
                 id: uuidv4(),
                 role: 'assistant',
-                content: response,
+                content: finalOutput,
                 timestamp: Date.now()
             };
 
@@ -115,14 +120,16 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             onChatUpdate([...historyWithUser, errorMsg]);
         } finally {
             setLoading(false);
+            setIsStreaming(false);
+            setStreamingContent('');
         }
     };
 
     const handleUndo = () => {
-        if (idea.chatHistory.length === 0) return;
+        if (safeHistory.length === 0) return;
 
-        const lastMsg = idea.chatHistory[idea.chatHistory.length - 1];
-        let newHistory = [...idea.chatHistory];
+        const lastMsg = safeHistory[safeHistory.length - 1];
+        let newHistory = [...safeHistory];
         let restoredInput = '';
 
         if (lastMsg.role !== 'user') {
@@ -154,7 +161,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             timestamp: Date.now()
         };
 
-        const historyWithUser = [...idea.chatHistory, userMsg];
+        const historyWithUser = [...safeHistory, userMsg];
         onChatUpdate(historyWithUser);
 
         if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
@@ -169,13 +176,19 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         }
 
         setLoading(true);
+        setIsStreaming(true);
+        setStreamingContent('');
 
         try {
-            const response = await aiService.chat(promptText, historyWithUser, idea, settings);
+            let finalOutput = '';
+            await aiService.chatStream(promptText, historyWithUser, idea, settings, (chunk) => {
+                finalOutput = chunk;
+                setStreamingContent(chunk);
+            });
             const aiMsg: ChatMessage = {
                 id: uuidv4(),
                 role: 'assistant',
-                content: response,
+                content: finalOutput,
                 timestamp: Date.now()
             };
             onChatUpdate([...historyWithUser, aiMsg]);
@@ -189,6 +202,8 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             onChatUpdate([...historyWithUser, errorMsg]);
         } finally {
             setLoading(false);
+            setIsStreaming(false);
+            setStreamingContent('');
         }
     };
 
@@ -200,7 +215,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 content: "Please configure your API Key in Settings to use the AI Assistant.",
                 timestamp: Date.now()
             };
-            onChatUpdate([...idea.chatHistory, errorMsg]);
+            onChatUpdate([...safeHistory, errorMsg]);
             return;
         }
         setLoading(true);
@@ -228,7 +243,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 content: "Here is a detailed plan for your idea:\n\n" + plan,
                 timestamp: Date.now()
             };
-            onChatUpdate([...idea.chatHistory, aiMsg]);
+            onChatUpdate([...safeHistory, aiMsg]);
         } catch (error) {
             const errorMsg: ChatMessage = {
                 id: uuidv4(),
@@ -236,7 +251,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 content: `Failed to generate plan: ${(error as Error).message}`,
                 timestamp: Date.now()
             };
-            onChatUpdate([...idea.chatHistory, errorMsg]);
+            onChatUpdate([...safeHistory, errorMsg]);
         } finally {
             setLoading(false);
         }
@@ -267,7 +282,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                     <h1>${escapeHtml(idea.title)} - Chat History</h1>
                     <p>Date: ${new Date().toLocaleDateString()}</p>
                 </div>
-                ${idea.chatHistory.map(msg => `
+                ${safeHistory.map(msg => `
                     <div class="message ${msg.role}">
                         <div class="role">${msg.role} - ${new Date(msg.timestamp).toLocaleTimeString()}</div>
                         <div class="content">${escapeHtml(msg.content)}</div>
@@ -303,7 +318,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                         onClick={handleUndo}
                         className="btn-text text-xs px-2 py-1"
                         title="Revert last turn"
-                        disabled={idea.chatHistory.length === 0 || loading}
+                        disabled={safeHistory.length === 0 || loading}
                     >
                         <Undo size={14} /> Undo
                     </button>
@@ -319,7 +334,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-                {idea.chatHistory.map(msg => (
+                {safeHistory.map(msg => (
                     <div key={msg.id}
                         className={`max-w-[80%] px-3 py-2 rounded-xl ${msg.role === 'user'
                             ? 'self-end bg-accent text-white'
@@ -343,7 +358,15 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                         <div className="whitespace-pre-wrap">{msg.content}</div>
                     </div>
                 ))}
-                {loading && (
+                {isStreaming && (
+                    <div className="max-w-[80%] px-3 py-2 rounded-xl self-start bg-background text-text-primary">
+                        <div className="flex justify-between items-center mb-1">
+                            <div className="text-[0.7rem] opacity-70">AI</div>
+                        </div>
+                        <div className="whitespace-pre-wrap">{streamingContent}</div>
+                    </div>
+                )}
+                {loading && !isStreaming && (
                     <div className="self-start bg-background text-text-secondary px-3 py-2 rounded-xl text-sm opacity-80 flex gap-1 items-center">
                         <span>Thinking</span>
                         <span className="dot-animate">.</span>

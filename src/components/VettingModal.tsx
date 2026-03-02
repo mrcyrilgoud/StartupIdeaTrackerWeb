@@ -1,6 +1,6 @@
 import React from 'react';
 import { Idea, VettingResult, VettingCriteria } from '../types';
-import { X, Trash2, AlertTriangle, CheckCircle, Lightbulb, Fingerprint, Scale, Zap } from 'lucide-react';
+import { X, Trash2, AlertTriangle, Lightbulb, Fingerprint, Scale, Zap } from 'lucide-react';
 
 interface VettingModalProps {
     isOpen: boolean;
@@ -27,26 +27,6 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
         }
     };
 
-    const getBadLabel = (c: VettingCriteria) => {
-        switch (c) {
-            case 'realism': return 'Unrealistic';
-            case 'creativity': return 'Boring / Cliché';
-            case 'uniqueness': return 'Generic / Saturated';
-            case 'legality': return 'Illegal / Risky';
-            default: return 'Low Score';
-        }
-    };
-
-    const getGoodLabel = (c: VettingCriteria) => {
-        switch (c) {
-            case 'realism': return 'Realistic';
-            case 'creativity': return 'Creative';
-            case 'uniqueness': return 'Unique';
-            case 'legality': return 'Safe';
-            default: return 'High Score';
-        }
-    };
-
     const getIcon = (c: VettingCriteria) => {
         switch (c) {
             case 'realism': return <AlertTriangle className="text-amber-500" />;
@@ -62,13 +42,6 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
     const relevantResults = currentCriteria
         ? results.filter(r => r.criteria === currentCriteria)
         : [];
-
-    // Filter to show only low scores (e.g., < 6) or separate them
-    const unrealisticIdeas = relevantResults
-        .filter(r => r.score < 6)
-        .sort((a, b) => a.score - b.score);
-
-    const realisticIdeas = relevantResults.filter(r => r.score >= 6);
 
     const getIdeaTitle = (id: string) => ideas.find(i => i.id === id)?.title || "Unknown Idea";
 
@@ -172,66 +145,69 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
                             No results found.
                         </div>
                     ) : (
-                        <>
-                            {unrealisticIdeas.length > 0 && (
-                                <div className="space-y-4">
-                                    <h3 className="font-bold text-red-500 flex items-center gap-2">
-                                        <AlertTriangle size={18} />
-                                        {currentCriteria ? getBadLabel(currentCriteria) : 'Low Score'} (Score &lt; 6)
-                                    </h3>
-                                    <p className="text-sm text-text-secondary">Consider removing these to clean up your list.</p>
+                        <div className="space-y-4">
+                            <h3 className="font-bold flex items-center gap-2 mb-4 text-text-primary">
+                                <Scale size={18} className="text-accent" />
+                                Results sorted by {currentCriteria ? getCriteriaLabel(currentCriteria) : 'Score'}
+                            </h3>
 
-                                    <div className="space-y-3">
-                                        {unrealisticIdeas.map(result => (
-                                            <div key={result.ideaId} className="p-4 rounded-xl border border-red-500/20 bg-red-500/5 hover:bg-red-500/10 transition-colors flex items-start gap-4 group">
+                            <div className="space-y-4">
+                                {[...relevantResults].sort((a, b) => b.score - a.score).map((result) => {
+                                    // Color calculation based on score
+                                    // Score 1-4: Red, 5-7: Yellow, 8-10: Green
+                                    let colorClass = "bg-green-500";
+                                    let textClass = "text-green-500";
+                                    let borderClass = "border-green-500/20";
+                                    let bgHoverClass = "hover:bg-green-500/10";
+                                    let bgSubtleClass = "bg-green-500/5";
+
+                                    if (result.score < 5) {
+                                        colorClass = "bg-red-500";
+                                        textClass = "text-red-500";
+                                        borderClass = "border-red-500/20";
+                                        bgHoverClass = "hover:bg-red-500/10";
+                                        bgSubtleClass = "bg-red-500/5";
+                                    } else if (result.score < 8) {
+                                        colorClass = "bg-amber-500";
+                                        textClass = "text-amber-500";
+                                        borderClass = "border-amber-500/20";
+                                        bgHoverClass = "hover:bg-amber-500/10";
+                                        bgSubtleClass = "bg-amber-500/5";
+                                    }
+
+                                    return (
+                                        <div key={result.ideaId} className={`p-5 rounded-xl border ${borderClass} ${bgSubtleClass} ${bgHoverClass} transition-all flex flex-col gap-3 group`}>
+                                            <div className="flex justify-between items-start">
                                                 <div className="flex-1">
-                                                    <div className="flex justify-between items-start mb-1">
-                                                        <h4 className="font-bold text-lg">{getIdeaTitle(result.ideaId)}</h4>
-                                                        <span className="text-xs font-bold text-red-500 px-2 py-1 bg-red-500/10 rounded-full border border-red-500/20">
-                                                            Score: {result.score}/10
+                                                    <h4 className="font-bold text-lg mb-1">{getIdeaTitle(result.ideaId)}</h4>
+                                                    <div className="flex items-center gap-3 w-full mb-3">
+                                                        <span className={`text-sm font-bold ${textClass} w-12`}>
+                                                            {result.score} / 10
                                                         </span>
+                                                        <div className="flex-1 h-2.5 bg-background rounded-full overflow-hidden border border-border/50">
+                                                            <div
+                                                                className={`h-full ${colorClass} rounded-full transition-all duration-1000 ease-out`}
+                                                                style={{ width: `${(result.score / 10) * 100}%` }}
+                                                            />
+                                                        </div>
                                                     </div>
                                                     <p className="text-sm text-text-secondary leading-relaxed">{result.reason}</p>
                                                 </div>
+
                                                 <button
                                                     onClick={() => onDelete(result.ideaId)}
-                                                    className="p-2 text-red-500 hover:bg-red-500/20 rounded-lg transition-colors shrink-0 flex flex-col items-center gap-1"
+                                                    className={`p-2 ml-4 ${textClass} opacity-50 hover:opacity-100 hover:bg-background rounded-lg transition-colors shrink-0 flex flex-col items-center gap-1`}
                                                     title="Delete this idea"
                                                 >
-                                                    <Trash2 size={20} />
+                                                    <Trash2 size={18} />
                                                     <span className="text-[10px] uppercase font-bold">Delete</span>
                                                 </button>
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {realisticIdeas.length > 0 && (
-                                <div className="space-y-4 mt-8 pt-6 border-t border-border">
-                                    <h3 className="font-bold text-green-500 flex items-center gap-2">
-                                        <CheckCircle size={18} />
-                                        {currentCriteria ? getGoodLabel(currentCriteria) : 'High Score'} (Score 6+)
-                                    </h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 opacity-60 hover:opacity-100 transition-opacity">
-                                        {realisticIdeas.map(result => (
-                                            <div key={result.ideaId} className="p-3 rounded-lg border border-green-500/20 bg-green-500/5 flex justify-between items-center">
-                                                <span className="font-medium truncate pr-2">{getIdeaTitle(result.ideaId)}</span>
-                                                <span className="text-xs font-bold text-green-600 bg-green-500/20 px-2 py-0.5 rounded-full">
-                                                    {result.score}/10
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {unrealisticIdeas.length === 0 && realisticIdeas.length > 0 && (
-                                <div className="text-center py-8 text-green-500 font-medium">
-                                    Great job! All your ideas passed the {currentCriteria} check.
-                                </div>
-                            )}
-                        </>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     )}
                 </div>
 

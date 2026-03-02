@@ -146,7 +146,8 @@ export const dbService = {
             provider: 'gemini',
             geminiKey: '',
             ollamaEndpoint: 'http://localhost:11434',
-            ollamaModel: 'llama3'
+            ollamaModel: 'llama3',
+            cliCommandTemplate: 'gemini "{{prompt}}"'
         };
     },
 

@@ -29,9 +29,9 @@ export interface Idea {
   timestamp: number;
   keywords: string[];
   chatHistory: ChatMessage[];
-  relatedIdeaIds: string[];
+  relatedIdeas: string[];
   status: 'draft' | 'validation' | 'mvp' | 'completed' | 'archived';
-  folderId?: string;
+  folder_id?: string;
   vetting?: Partial<Record<VettingCriteria, VettingResult>>;
 }
 
@@ -53,11 +53,12 @@ export const STATUS_COLORS: Record<IdeaStatus, string> = {
   archived: '#6B7280'     // dark gray
 };
 
-export type LLMProviderType = 'gemini' | 'ollama';
+export type LLMProviderType = 'gemini' | 'ollama' | 'cli_proxy';
 
 export interface AppSettings {
   provider: LLMProviderType;
   geminiKey: string;
   ollamaEndpoint: string;
   ollamaModel: string;
+  cliCommandTemplate: string;
 }

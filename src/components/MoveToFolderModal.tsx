@@ -5,7 +5,7 @@ import { Folder } from '../types';
 interface MoveToFolderModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onMove: (folderId?: string) => void;
+    onMove: (folder_id?: string) => void;
     folders: Folder[];
     currentFolderId?: string;
 }

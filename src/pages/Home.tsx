@@ -21,7 +21,7 @@ export const Home: React.FC = () => {
 
     const [error, setError] = useState<string | null>(null);
     const [analyzingMVP, setAnalyzingMVP] = useState(false);
-    const [mvpResult, setMvpResult] = useState<MVPAnalysisResult | null>(null);
+    const [mvpResult, setMvpResult] = useState<MVPAnalysisResult[] | null>(null);
     const [showMVPModal, setShowMVPModal] = useState(false);
 
     // Vetting state
@@ -104,18 +104,26 @@ export const Home: React.FC = () => {
         }
     };
 
-    const handleDeleteFolder = async (folderId: string) => {
+    const handleDeleteFolder = async (folder_id: string) => {
         try {
-            await dbService.deleteFolder(folderId);
-            setFolders(prev => prev.filter(f => f.id !== folderId));
-            if (selectedFolderId === folderId) {
+            await dbService.deleteFolder(folder_id);
+            setFolders(prev => prev.filter(f => f.id !== folder_id));
+            if (selectedFolderId === folder_id) {
                 setSelectedFolderId('all');
             }
-            // Update ideas in this folder to have no folderId (Uncategorized)
-            // Note: In a real app, backend loop updates might be better, or batch update endpoint.
-            // For now, let's just update local state. The backend JSON won't automatically unset folderId
-            // unless we update each idea. But if the folder is gone, the ID is just an orphan reference.
-            // For cleaner data, we could fetch and update all ideas in this folder, but avoiding N requests for now.
+            // Update ideas in this folder to have no folder_id (Uncategorized)
+            const orphanedIdeas = ideas.filter(i => i.folder_id === folder_id);
+            if (orphanedIdeas.length > 0) {
+                setIdeas(prev => prev.map(i =>
+                    i.folder_id === folder_id ? { ...i, folder_id: undefined } : i
+                ));
+
+                // Update the backend to persist the 'unassigned' state
+                Promise.all(orphanedIdeas.map(idea => {
+                    const updated = { ...idea, folder_id: undefined };
+                    return dbService.saveIdea(updated);
+                })).catch(err => console.error("Failed to unset folder_id for orphaned ideas:", err));
+            }
         } catch (e) {
             console.error('Failed to delete folder:', e);
             alert('Failed to delete folder');
@@ -130,9 +138,9 @@ export const Home: React.FC = () => {
             timestamp: Date.now(),
             keywords: [],
             chatHistory: [],
-            relatedIdeaIds: [],
+            relatedIdeas: [],
             status: 'draft',
-            folderId: selectedFolderId !== 'all' ? selectedFolderId : undefined
+            folder_id: selectedFolderId !== 'all' ? selectedFolderId : undefined
         };
         // We pass the new object in state so Detail page can load it without DB
         navigate(`/idea/${newIdea.id}`, { state: { idea: newIdea, isNew: true } });
@@ -224,11 +232,11 @@ export const Home: React.FC = () => {
         setShowMoveModal(true);
     };
 
-    const handleMoveComplete = async (folderId?: string) => {
+    const handleMoveComplete = async (folder_id?: string) => {
         if (!ideaToMove) return;
 
         try {
-            const updatedIdea = { ...ideaToMove, folderId };
+            const updatedIdea = { ...ideaToMove, folder_id };
             await dbService.saveIdea(updatedIdea);
 
             // Update local state
@@ -248,15 +256,15 @@ export const Home: React.FC = () => {
         // Add a visual drag image if needed, or let browser handle it
     };
 
-    const handleDropIdea = (folderId: string, ideaId: string) => {
+    const handleDropIdea = (folder_id: string, ideaId: string) => {
         // Find idea in current state to update DB
         const idea = ideas.find(i => i.id === ideaId);
         if (!idea) return;
 
-        const targetFolderId = folderId === 'uncategorized' ? undefined : folderId;
-        if (idea.folderId === targetFolderId) return;
+        const targetFolderId = folder_id === 'uncategorized' ? undefined : folder_id;
+        if (idea.folder_id === targetFolderId) return;
 
-        const updatedIdea = { ...idea, folderId: targetFolderId };
+        const updatedIdea = { ...idea, folder_id: targetFolderId };
 
         // Optimistic Update
         setIdeas(prev => prev.map(i => i.id === ideaId ? updatedIdea : i));
@@ -270,12 +278,12 @@ export const Home: React.FC = () => {
         });
     };
 
-    const handleDragOver = (e: React.DragEvent, folderId: string) => {
+    const handleDragOver = (e: React.DragEvent, folder_id: string) => {
         e.preventDefault();
         e.stopPropagation();
 
-        if (dragOverFolderId !== folderId) {
-            setDragOverFolderId(folderId);
+        if (dragOverFolderId !== folder_id) {
+            setDragOverFolderId(folder_id);
         }
 
         // Trigger auto-scroll manually since we stopped propagation
@@ -311,13 +319,13 @@ export const Home: React.FC = () => {
         setDragOverFolderId(null);
     };
 
-    const handleGroupDrop = (e: React.DragEvent, folderId: string) => {
+    const handleGroupDrop = (e: React.DragEvent, folder_id: string) => {
         e.preventDefault();
         e.stopPropagation();
         setDragOverFolderId(null);
         const ideaId = e.dataTransfer.getData('ideaId');
         if (ideaId) {
-            handleDropIdea(folderId, ideaId);
+            handleDropIdea(folder_id, ideaId);
         }
     };
 
@@ -379,13 +387,13 @@ export const Home: React.FC = () => {
             const updatePromises: Promise<any>[] = [];
 
             for (const suggestion of selectedSuggestions) {
-                const folderId = newFoldersMap.get(suggestion.name);
-                if (!folderId) continue;
+                const folder_id = newFoldersMap.get(suggestion.name);
+                if (!folder_id) continue;
 
                 for (const ideaId of suggestion.ideaIds) {
                     const ideaIndex = updatedIdeas.findIndex(i => i.id === ideaId);
                     if (ideaIndex !== -1) {
-                        const updatedIdea = { ...updatedIdeas[ideaIndex], folderId };
+                        const updatedIdea = { ...updatedIdeas[ideaIndex], folder_id };
                         updatedIdeas[ideaIndex] = updatedIdea;
                         updatePromises.push(dbService.saveIdea(updatedIdea));
                     }
@@ -486,11 +494,6 @@ export const Home: React.FC = () => {
         }
     };
 
-    const getWinningIdeaTitle = () => {
-        if (!mvpResult) return "";
-        const idea = ideas.find(i => i.id === mvpResult.ideaId);
-        return idea ? idea.title : "Unknown Idea";
-    };
 
     // Filter and Sort Logic
     // Optimization: Create a Set of valid folder IDs for O(1) lookup
@@ -498,15 +501,15 @@ export const Home: React.FC = () => {
 
     const filteredIdeas = ideas
         .filter(idea => {
-            const matchesSearch = (idea.title + idea.details + idea.keywords.join(' ')).toLowerCase().includes(searchQuery.toLowerCase());
+            const matchesSearch = (idea.title + idea.details + (idea.keywords || []).join(' ')).toLowerCase().includes(searchQuery.toLowerCase());
             const matchesStatus = statusFilter === 'all' || idea.status === statusFilter;
             const matchesFolder = () => {
                 if (selectedFolderId === 'all') return true;
                 if (selectedFolderId === 'uncategorized') {
-                    // Match if no folderId OR if folderId doesn't exist in current folders list (orphan)
-                    return !idea.folderId || !validFolderIds.has(idea.folderId);
+                    // Match if no folder_id OR if folder_id doesn't exist in current folders list (orphan)
+                    return !idea.folder_id || !validFolderIds.has(idea.folder_id);
                 }
-                return idea.folderId === selectedFolderId;
+                return idea.folder_id === selectedFolderId;
             };
 
             return matchesSearch && matchesStatus && matchesFolder();
@@ -709,7 +712,7 @@ export const Home: React.FC = () => {
                                         </p>
 
                                         <div className="flex flex-wrap gap-2 mb-4">
-                                            {idea.keywords.slice(0, 3).map((kw, idx) => (
+                                            {(idea.keywords || []).slice(0, 3).map((kw, idx) => (
                                                 <span key={idx} className="text-[10px] font-bold uppercase tracking-wider bg-accent/5 text-accent px-2 py-1 rounded-md border border-accent/10">
                                                     {kw}
                                                 </span>
@@ -745,7 +748,7 @@ export const Home: React.FC = () => {
                                     // Group ideas logic
                                     const groupedIdeas: Record<string, Idea[]> = {};
                                     filteredIdeas.forEach(idea => {
-                                        const fId = (idea.folderId && validFolderIds.has(idea.folderId)) ? idea.folderId : 'uncategorized';
+                                        const fId = (idea.folder_id && validFolderIds.has(idea.folder_id)) ? idea.folder_id : 'uncategorized';
                                         if (!groupedIdeas[fId]) groupedIdeas[fId] = [];
                                         groupedIdeas[fId].push(idea);
                                     });
@@ -754,10 +757,10 @@ export const Home: React.FC = () => {
                                         <div className="space-y-10">
                                             {/* Render Folders First */}
                                             {folders.map(folder => {
-                                                const folderIdeas = groupedIdeas[folder.id];
+                                                const folder_ideas = groupedIdeas[folder.id];
                                                 const isDragOver = dragOverFolderId === folder.id;
 
-                                                if ((!folderIdeas || folderIdeas.length === 0) && !isDragOver) return null;
+                                                if ((!folder_ideas || folder_ideas.length === 0) && !isDragOver) return null;
 
                                                 return (
                                                     <div
@@ -771,7 +774,7 @@ export const Home: React.FC = () => {
                                                             <FolderIcon size={20} className={isDragOver ? "text-accent" : "text-accent"} />
                                                             <h3 className="text-xl font-bold text-text-primary">{folder.name}</h3>
                                                             <span className="text-xs bg-accent/10 text-accent px-2 py-0.5 rounded-full font-bold">
-                                                                {folderIdeas ? folderIdeas.length : 0}
+                                                                {folder_ideas ? folder_ideas.length : 0}
                                                             </span>
                                                             {isDragOver && (
                                                                 <span className="ml-auto text-xs text-accent font-bold animate-pulse">
@@ -780,8 +783,8 @@ export const Home: React.FC = () => {
                                                             )}
                                                         </div>
                                                         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full px-1">
-                                                            {folderIdeas && folderIdeas.map(renderIdeaCard)}
-                                                            {isDragOver && (!folderIdeas || folderIdeas.length === 0) && (
+                                                            {folder_ideas && folder_ideas.map(renderIdeaCard)}
+                                                            {isDragOver && (!folder_ideas || folder_ideas.length === 0) && (
                                                                 <div className="h-32 border-2 border-dashed border-accent/30 rounded-lg flex items-center justify-center text-accent/50 text-sm">
                                                                     Drop idea here
                                                                 </div>
@@ -837,9 +840,8 @@ export const Home: React.FC = () => {
 
                     <MVPResultModal
                         isOpen={showMVPModal}
-                        title={getWinningIdeaTitle()}
-                        reason={mvpResult?.reason || ""}
-                        ideaId={mvpResult?.ideaId || ""}
+                        results={mvpResult}
+                        ideas={ideas}
                         onClose={() => setShowMVPModal(false)}
                     />
 
@@ -857,7 +859,7 @@ export const Home: React.FC = () => {
                         onClose={() => setShowMoveModal(false)}
                         onMove={handleMoveComplete}
                         folders={folders}
-                        currentFolderId={ideaToMove?.folderId}
+                        currentFolderId={ideaToMove?.folder_id}
                     />
 
                     <SmartOrganizeModal

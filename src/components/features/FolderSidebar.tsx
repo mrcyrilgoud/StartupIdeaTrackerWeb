@@ -5,11 +5,11 @@ import { Folder as FolderType } from '../../types';
 interface FolderSidebarProps {
     folders: FolderType[];
     selectedFolderId: string;
-    onSelectFolder: (folderId: string) => void;
+    onSelectFolder: (folder_id: string) => void;
     onCreateFolder: (name: string) => void;
-    onDeleteFolder: (folderId: string) => void;
+    onDeleteFolder: (folder_id: string) => void;
     onSmartOrganize: () => void;
-    onDropIdea: (folderId: string, ideaId: string) => void;
+    onDropIdea: (folder_id: string, ideaId: string) => void;
     className?: string; // Allow customization of sidebar styles
 }
 
@@ -36,12 +36,12 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
         }
     };
 
-    const handleDragOver = (e: React.DragEvent, folderId: string) => {
+    const handleDragOver = (e: React.DragEvent, folder_id: string) => {
         e.preventDefault();
         e.stopPropagation(); // Stop propagation
         // Only set state if different to avoid re-renders, although React handles this mostly.
-        if (dragOverFolderId !== folderId) {
-            setDragOverFolderId(folderId);
+        if (dragOverFolderId !== folder_id) {
+            setDragOverFolderId(folder_id);
         }
     };
 
@@ -58,13 +58,13 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
         setDragOverFolderId(null);
     };
 
-    const handleDrop = (e: React.DragEvent, folderId: string) => {
+    const handleDrop = (e: React.DragEvent, folder_id: string) => {
         e.preventDefault();
         e.stopPropagation();
         setDragOverFolderId(null);
         const ideaId = e.dataTransfer.getData('ideaId');
         if (ideaId) {
-            onDropIdea(folderId, ideaId);
+            onDropIdea(folder_id, ideaId);
         }
     };
 

@@ -116,7 +116,7 @@ export const HomeChat: React.FC = () => {
                 timestamp: Date.now(),
                 keywords: [],
                 chatHistory: historyToUse, // Preserve the brainstorming context
-                relatedIdeaIds: [],
+                relatedIdeas: [],
                 status: 'draft'
             };
 

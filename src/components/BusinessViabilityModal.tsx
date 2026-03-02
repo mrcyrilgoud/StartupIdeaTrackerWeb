@@ -169,8 +169,8 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto p-6">
-                    {loading ? (
+                <div className="flex-1 overflow-y-auto p-6 relative">
+                    {loading && !report ? (
                         <div className="flex flex-col items-center justify-center py-16 px-5 text-text-secondary">
                             <div className="w-12 h-12 border-[3px] border-border border-t-accent rounded-full animate-spin mb-4" />
                             <p className="m-0 text-base">Analyzing business viability...</p>
@@ -196,7 +196,12 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                             </button>
                         </div>
                     ) : (
-                        <div className="markdown-body leading-relaxed text-[0.95rem] text-text-primary">
+                        <div className="markdown-body leading-relaxed text-[0.95rem] text-text-primary relative pr-8">
+                            {loading && report && (
+                                <div className="absolute top-0 right-0 pointer-events-none">
+                                    <div className="w-5 h-5 border-2 border-border border-t-accent rounded-full animate-spin" />
+                                </div>
+                            )}
                             <ReactMarkdown
                                 components={{
                                     h1: ({ node, ...props }) => <h1 className="text-text-primary border-b border-border pb-2.5 mt-6 text-2xl" {...props} />,

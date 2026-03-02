@@ -10,7 +10,8 @@ export const SettingsPage: React.FC = () => {
         provider: 'gemini',
         geminiKey: '',
         ollamaEndpoint: 'http://localhost:11434',
-        ollamaModel: 'llama3'
+        ollamaModel: 'llama3',
+        cliCommandTemplate: 'gemini "{{prompt}}"'
     });
     const [saved, setSaved] = useState(false);
 
@@ -30,7 +31,7 @@ export const SettingsPage: React.FC = () => {
     };
 
     return (
-        <div className="max-w-[600px] mx-auto">
+        <div className="max-w-[600px] mx-auto pb-12">
             <h2 className="text-2xl font-bold mb-6">Settings</h2>
 
             <div className="card flex flex-col gap-4">
@@ -88,10 +89,19 @@ export const SettingsPage: React.FC = () => {
                             />
                             Ollama (Local)
                         </label>
+                        <label className="flex gap-2 items-center cursor-pointer">
+                            <input
+                                type="radio"
+                                checked={settings.provider === 'cli_proxy'}
+                                onChange={() => handleChange('provider', 'cli_proxy')}
+                                className="accent-accent"
+                            />
+                            Local CLI Proxy
+                        </label>
                     </div>
                 </div>
 
-                {settings.provider === 'gemini' ? (
+                {settings.provider === 'gemini' && (
                     <div>
                         <label className="block mb-2 font-medium">Gemini API Key</label>
                         <input
@@ -102,7 +112,9 @@ export const SettingsPage: React.FC = () => {
                             placeholder="Enter your API Key"
                         />
                     </div>
-                ) : (
+                )}
+
+                {settings.provider === 'ollama' && (
                     <>
                         <div>
                             <label className="block mb-2 font-medium">Ollama Endpoint</label>
@@ -123,6 +135,34 @@ export const SettingsPage: React.FC = () => {
                             />
                         </div>
                     </>
+                )}
+
+                {settings.provider === 'cli_proxy' && (
+                    <div>
+                        <label className="block mb-2 font-medium">CLI Command Template</label>
+                        <p className="text-sm text-text-secondary mb-2 whitespace-pre-wrap">
+                            Use {"{"}{"{"}prompt{"}"}{"}"} to represent the AI query. <br />
+                            Example: <code className="bg-background px-1 rounded">gemini ask "{"{"}{"{"}prompt{"}"}{"}"}"</code>
+                        </p>
+                        <input
+                            className="input mb-4"
+                            type="text"
+                            value={settings.cliCommandTemplate || 'gemini "{{prompt}}"'}
+                            onChange={(e) => handleChange('cliCommandTemplate', e.target.value)}
+                            placeholder='gemini "{{prompt}}"'
+                        />
+                        <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+                            <h4 className="font-semibold text-purple-600 dark:text-purple-400 mb-2">Proxy Server Required</h4>
+                            <p className="text-sm text-text-secondary leading-relaxed">
+                                To use native CLI commands directly, you must run the local companion server in the background:
+                                <br /><br />
+                                <code className="block bg-background text-text-primary p-2 rounded border border-border my-1 select-all">
+                                    cd ~/Desktop/repos/AI-CLI-Proxy-Server<br />
+                                    node server.js
+                                </code>
+                            </p>
+                        </div>
+                    </div>
                 )}
 
                 <div className="pt-4 border-t border-border">

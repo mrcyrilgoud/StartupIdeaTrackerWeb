@@ -262,7 +262,7 @@ export const IdeaSpark: React.FC = () => {
             timestamp: Date.now(),
             keywords: [],
             chatHistory: [],
-            relatedIdeaIds: [],
+            relatedIdeas: [],
             status: 'draft'
         };
         await dbService.saveIdea(newIdea);

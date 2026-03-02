@@ -102,8 +102,15 @@ export const Detail: React.FC = () => {
 
     const confirmDelete = async () => {
         if (id) {
-            await dbService.deleteIdea(id);
-            navigate('/');
+            try {
+                await dbService.deleteIdea(id);
+                navigate('/');
+            } catch (e) {
+                console.error('Failed to delete idea:', e);
+                alert('Failed to delete idea. Please try again.');
+            } finally {
+                setShowDeleteModal(false);
+            }
         }
     };
 
@@ -115,7 +122,7 @@ export const Detail: React.FC = () => {
 
             setIdea(prev => {
                 if (!prev) return null;
-                const updated = { ...prev, keywords };
+                const updated = { ...prev, keywords: (keywords || []) };
                 dbService.saveIdea(updated);
                 return updated;
             });
@@ -173,8 +180,9 @@ export const Detail: React.FC = () => {
                 return;
             }
 
-            const report = await aiService.generateViabilityReport(idea, settings);
-            setViabilityReport(report);
+            await aiService.generateViabilityReportStream(idea, settings, (chunk) => {
+                setViabilityReport(chunk);
+            });
         } catch (e) {
             console.error(e);
             setViabilityError(`Error generating report: ${(e as Error).message}`);
@@ -199,8 +207,9 @@ export const Detail: React.FC = () => {
                 return;
             }
 
-            const report = await aiService.analyzeCompetitors(idea, settings);
-            setCompetitorReport(report);
+            await aiService.analyzeCompetitorsStream(idea, settings, (chunk) => {
+                setCompetitorReport(chunk);
+            });
         } catch (e) {
             console.error(e);
             setCompetitorError(`Error generating report: ${(e as Error).message}`);
@@ -329,7 +338,7 @@ export const Detail: React.FC = () => {
                                         if (val) {
                                             setIdea(prev => {
                                                 if (!prev) return null;
-                                                const newKw = [...prev.keywords, val];
+                                                const newKw = [...(prev.keywords || []), val];
                                                 const updated = { ...prev, keywords: newKw };
                                                 dbService.saveIdea(updated);
                                                 return updated;
@@ -341,7 +350,7 @@ export const Detail: React.FC = () => {
                             />
                         </div>
                         <div className="flex gap-2 flex-wrap">
-                            {idea.keywords.map((kw, idx) => (
+                            {(idea.keywords || []).map((kw, idx) => (
                                 <span key={idx} className="text-xs bg-background px-3 py-1 rounded-2xl flex items-center gap-1 group">
                                     {kw}
                                     <button
@@ -349,7 +358,7 @@ export const Detail: React.FC = () => {
                                         onClick={() => {
                                             setIdea(prev => {
                                                 if (!prev) return null;
-                                                const newKw = prev.keywords.filter((_, i) => i !== idx);
+                                                const newKw = (prev.keywords || []).filter((_, i) => i !== idx);
                                                 const updated = { ...prev, keywords: newKw };
                                                 dbService.saveIdea(updated);
                                                 return updated;
@@ -360,7 +369,7 @@ export const Detail: React.FC = () => {
                                     </button>
                                 </span>
                             ))}
-                            {idea.keywords.length === 0 && <span className="text-text-secondary text-xs">No keywords extracted yet.</span>}
+                            {!(idea.keywords?.length) && <span className="text-text-secondary text-xs">No keywords extracted yet.</span>}
                         </div>
                     </div>
                 </div>
