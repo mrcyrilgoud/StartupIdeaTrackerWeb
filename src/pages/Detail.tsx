@@ -13,6 +13,7 @@ import { ArrowLeft, Sparkles, Trash2, Terminal, Search, Swords } from 'lucide-re
 export const Detail: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
+    const location = useLocation();
     const [idea, setIdea] = useState<Idea | null>(null);
     const [loading, setLoading] = useState(true);
     const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -32,11 +33,26 @@ export const Detail: React.FC = () => {
     // Ref to track the latest idea state for debounced saving
     const latestIdeaRef = useRef<Idea | null>(null);
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const isNewDraftRef = useRef(false);
 
     // Keep ref in sync
     useEffect(() => {
         latestIdeaRef.current = idea;
     }, [idea]);
+
+    const clearNewDraftState = useCallback(() => {
+        if (!isNewDraftRef.current) return;
+        isNewDraftRef.current = false;
+        navigate(location.pathname, { replace: true });
+    }, [location.pathname, navigate]);
+
+    const persistIdea = useCallback((ideaToSave: Idea, options?: RequestInit) => {
+        latestIdeaRef.current = ideaToSave;
+        return dbService.saveIdea(ideaToSave, options).then((savedId) => {
+            clearNewDraftState();
+            return savedId;
+        });
+    }, [clearNewDraftState]);
 
     // Cleanup timeout on unmount AND flush any pending save
     useEffect(() => {
@@ -45,35 +61,60 @@ export const Detail: React.FC = () => {
                 clearTimeout(saveTimeoutRef.current);
                 // Flush any pending save immediately on unmount
                 if (latestIdeaRef.current) {
-                    dbService.saveIdea(latestIdeaRef.current, { keepalive: true });
+                    void persistIdea(latestIdeaRef.current, { keepalive: true });
                 }
             }
         };
-    }, []);
+    }, [persistIdea]);
 
-    const triggerDebouncedSave = () => {
+    const triggerDebouncedSave = (ideaToSave: Idea) => {
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
         }
+
+        // Keep this in sync immediately so unmount flushes save the latest edits.
+        latestIdeaRef.current = ideaToSave;
+
         saveTimeoutRef.current = setTimeout(() => {
             if (latestIdeaRef.current) {
-                dbService.saveIdea(latestIdeaRef.current);
+                void persistIdea(latestIdeaRef.current);
             }
         }, 1000);
     };
 
-    const location = useLocation();
+    const persistIdeaImmediately = useCallback((ideaToSave: Idea, options?: RequestInit) => {
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+
+        latestIdeaRef.current = ideaToSave;
+        return persistIdea(ideaToSave, options);
+    }, [persistIdea]);
 
     useEffect(() => {
         const init = async () => {
             // Check if we have state from navigation (new idea draft)
             const state = location.state as { idea?: Idea, isNew?: boolean } | null;
+            const navigationIdea = state?.idea;
+            const isDraftFromNavigation = state?.isNew && navigationIdea?.id === id;
+            isNewDraftRef.current = Boolean(isDraftFromNavigation);
 
-            if (state?.isNew && state.idea) {
-                setIdea(state.idea);
-            } else if (id) {
-                const loaded = await dbService.getIdea(id);
-                if (loaded) setIdea(loaded);
+            if (id) {
+                if (isDraftFromNavigation && navigationIdea) {
+                    // New drafts are created in memory first and may not exist in json-server yet.
+                    setIdea(navigationIdea);
+                } else {
+                    const loaded = await dbService.getIdea(id);
+                    if (loaded) {
+                        setIdea(loaded);
+                    } else if (navigationIdea && navigationIdea.id === id) {
+                        // Fallback for first render before the new draft exists in DB.
+                        setIdea(navigationIdea);
+                    }
+                }
+            } else if (state?.isNew && navigationIdea) {
+                setIdea(navigationIdea);
             }
             const s = await dbService.getSettings();
             setSettings(s);
@@ -87,7 +128,7 @@ export const Detail: React.FC = () => {
         setIdea(prev => {
             if (!prev) return null;
             const updated = { ...prev, [field]: value };
-            triggerDebouncedSave();
+            triggerDebouncedSave(updated);
             return updated;
         });
     };
@@ -123,7 +164,7 @@ export const Detail: React.FC = () => {
             setIdea(prev => {
                 if (!prev) return null;
                 const updated = { ...prev, keywords: (keywords || []) };
-                dbService.saveIdea(updated);
+                void persistIdeaImmediately(updated);
                 return updated;
             });
         } catch (e) {
@@ -138,10 +179,10 @@ export const Detail: React.FC = () => {
         setIdea(prev => {
             if (!prev) return null;
             const updated = { ...prev, chatHistory: newHistory };
-            dbService.saveIdea(updated);
+            void persistIdeaImmediately(updated);
             return updated;
         });
-    }, []);
+    }, [persistIdeaImmediately]);
 
     // Callback to append text to the idea details (e.g. from Chat)
     const handleAppendToNote = useCallback((text: string) => {
@@ -150,16 +191,45 @@ export const Detail: React.FC = () => {
             // Append with a newline if details is not empty
             const newDetails = prev.details ? `${prev.details}\n\n${text}` : text;
             const updated = { ...prev, details: newDetails };
-            dbService.saveIdea(updated);
+            void persistIdeaImmediately(updated);
             return updated;
         });
-    }, []);
+    }, [persistIdeaImmediately]);
 
     const handleStatusChange = (newStatus: any) => {
         setIdea(prev => {
             if (!prev) return null;
             const updated = { ...prev, status: newStatus };
-            dbService.saveIdea(updated);
+            void persistIdeaImmediately(updated);
+            return updated;
+        });
+    };
+
+    const handleAddKeyword = (value: string) => {
+        const keyword = value.trim();
+        if (!keyword) return;
+
+        setIdea(prev => {
+            if (!prev) return null;
+            const existingKeywords = prev.keywords || [];
+            if (existingKeywords.includes(keyword)) {
+                return prev;
+            }
+
+            const updated = { ...prev, keywords: [...existingKeywords, keyword] };
+            void persistIdeaImmediately(updated);
+            return updated;
+        });
+    };
+
+    const handleRemoveKeyword = (indexToRemove: number) => {
+        setIdea(prev => {
+            if (!prev) return null;
+            const updated = {
+                ...prev,
+                keywords: (prev.keywords || []).filter((_, index) => index !== indexToRemove)
+            };
+            void persistIdeaImmediately(updated);
             return updated;
         });
     };
@@ -334,17 +404,8 @@ export const Detail: React.FC = () => {
                                 placeholder="Add keyword..."
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
-                                        const val = (e.target as HTMLInputElement).value.trim();
-                                        if (val) {
-                                            setIdea(prev => {
-                                                if (!prev) return null;
-                                                const newKw = [...(prev.keywords || []), val];
-                                                const updated = { ...prev, keywords: newKw };
-                                                dbService.saveIdea(updated);
-                                                return updated;
-                                            });
-                                            (e.target as HTMLInputElement).value = '';
-                                        }
+                                        handleAddKeyword((e.target as HTMLInputElement).value);
+                                        (e.target as HTMLInputElement).value = '';
                                     }
                                 }}
                             />
@@ -355,15 +416,7 @@ export const Detail: React.FC = () => {
                                     {kw}
                                     <button
                                         className="opacity-0 group-hover:opacity-100 transition-opacity text-text-secondary hover:text-danger"
-                                        onClick={() => {
-                                            setIdea(prev => {
-                                                if (!prev) return null;
-                                                const newKw = (prev.keywords || []).filter((_, i) => i !== idx);
-                                                const updated = { ...prev, keywords: newKw };
-                                                dbService.saveIdea(updated);
-                                                return updated;
-                                            });
-                                        }}
+                                        onClick={() => handleRemoveKeyword(idx)}
                                     >
                                         &times;
                                     </button>

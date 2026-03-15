@@ -102,7 +102,12 @@ export const SettingsPage: React.FC = () => {
                 </div>
 
                 {settings.provider === 'gemini' && (
-                    <div>
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            save();
+                        }}
+                    >
                         <label className="block mb-2 font-medium">Gemini API Key</label>
                         <input
                             className="input"
@@ -111,7 +116,7 @@ export const SettingsPage: React.FC = () => {
                             onChange={(e) => handleChange('geminiKey', e.target.value)}
                             placeholder="Enter your API Key"
                         />
-                    </div>
+                    </form>
                 )}
 
                 {settings.provider === 'ollama' && (

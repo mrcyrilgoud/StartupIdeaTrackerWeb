@@ -3,6 +3,75 @@ import { Idea, AppSettings, Folder } from '../types';
 const API_BASE_URL = 'http://localhost:3001';
 const IDEAS_URL = `${API_BASE_URL}/ideas`;
 const FOLDERS_URL = `${API_BASE_URL}/folders`;
+const pendingSaveChains = new Map<string, Promise<string>>();
+
+async function serializeResourceSave(resourceKey: string, saveOperation: () => Promise<string>): Promise<string> {
+    const previousOperation = pendingSaveChains.get(resourceKey) ?? Promise.resolve(resourceKey);
+    const nextOperation = previousOperation
+        .catch(() => resourceKey)
+        .then(saveOperation);
+
+    pendingSaveChains.set(resourceKey, nextOperation);
+
+    try {
+        return await nextOperation;
+    } finally {
+        if (pendingSaveChains.get(resourceKey) === nextOperation) {
+            pendingSaveChains.delete(resourceKey);
+        }
+    }
+}
+
+async function upsertJsonServerResource<T extends { id: string }>(
+    baseUrl: string,
+    resource: T,
+    options?: RequestInit
+): Promise<string> {
+    return serializeResourceSave(`${baseUrl}:${resource.id}`, async () => {
+        const requestInit: RequestInit = {
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(resource),
+            ...options
+        };
+
+        const updateResponse = await fetch(`${baseUrl}/${resource.id}`, {
+            method: 'PUT',
+            ...requestInit
+        });
+
+        if (updateResponse.ok) {
+            return resource.id;
+        }
+
+        if (updateResponse.status !== 404) {
+            throw new Error(`Failed to save resource: ${updateResponse.statusText}`);
+        }
+
+        const createResponse = await fetch(baseUrl, {
+            method: 'POST',
+            ...requestInit
+        });
+
+        if (createResponse.ok) {
+            return resource.id;
+        }
+
+        // Concurrent first-save calls can race: another caller may create the same id
+        // between our 404 PUT and this POST. Retry PUT once to converge on the existing row.
+        const retryUpdateResponse = await fetch(`${baseUrl}/${resource.id}`, {
+            method: 'PUT',
+            ...requestInit
+        });
+
+        if (retryUpdateResponse.ok) {
+            return resource.id;
+        }
+
+        throw new Error(`Failed to create resource: ${createResponse.statusText}`);
+    });
+}
 
 export const dbService = {
     async getAllIdeas(): Promise<Idea[]> {
@@ -33,40 +102,7 @@ export const dbService = {
 
     async saveIdea(idea: Idea, options?: RequestInit): Promise<string> {
         try {
-            // Optimistic Update: Try to PUT first (99% of cases)
-            // specific to json-server: PUT /ideas/:id updates the item
-            const response = await fetch(`${IDEAS_URL}/${idea.id}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(idea),
-                ...options
-            });
-
-            // If successful, we are done
-            if (response.ok) {
-                return idea.id;
-            }
-
-            // If 404, it doesn't exist yet, so we POST (Create)
-            if (response.status === 404) {
-                const createResponse = await fetch(IDEAS_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(idea),
-                    ...options
-                });
-
-                if (!createResponse.ok) {
-                    throw new Error(`Failed to create idea: ${createResponse.statusText}`);
-                }
-                return idea.id;
-            }
-
-            throw new Error(`Failed to save idea: ${response.statusText}`);
+            return await upsertJsonServerResource(IDEAS_URL, idea, options);
         } catch (error) {
             console.error('Error saving idea:', error);
             throw error;
@@ -102,24 +138,7 @@ export const dbService = {
 
     async saveFolder(folder: Folder): Promise<string> {
         try {
-            const response = await fetch(`${FOLDERS_URL}/${folder.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(folder),
-            });
-
-            if (response.ok) return folder.id;
-
-            if (response.status === 404) {
-                const createResponse = await fetch(FOLDERS_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(folder),
-                });
-                if (!createResponse.ok) throw new Error(`Failed to create folder: ${createResponse.statusText}`);
-                return folder.id;
-            }
-            throw new Error(`Failed to save folder: ${response.statusText}`);
+            return await upsertJsonServerResource(FOLDERS_URL, folder);
         } catch (error) {
             console.error('Error saving folder:', error);
             throw error;

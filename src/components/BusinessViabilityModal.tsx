@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { X, FileText, Download, Code } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -54,6 +54,20 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
     error,
     onClose
 }) => {
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                onClose();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen, onClose]);
+
     if (!isOpen) return null;
 
     const downloadAsPDF = () => {
@@ -150,7 +164,17 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 bg-black/70 flex justify-center items-center z-[1000] p-5">
+        <div
+            className="fixed inset-0 bg-black/70 flex justify-center items-center z-[1000] p-5"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Business Viability Report"
+            onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                    onClose();
+                }
+            }}
+        >
             <div className="bg-surface rounded-2xl w-full max-w-[800px] max-h-[90vh] flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.4)] animate-slideIn">
                 {/* Header */}
                 <div className="p-6 border-b border-border flex justify-between items-center">
@@ -163,6 +187,8 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                     <button
                         onClick={onClose}
                         className="btn-icon p-2"
+                        aria-label="Close business viability report"
+                        title="Close"
                     >
                         <X size={20} />
                     </button>
