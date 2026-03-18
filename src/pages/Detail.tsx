@@ -48,11 +48,11 @@ export const Detail: React.FC = () => {
         latestIdeaRef.current = idea;
     }, [idea]);
 
-    const isAbortError = (error: unknown): boolean => {
+    const isAbortError = useCallback((error: unknown): boolean => {
         if (!error || typeof error !== 'object') return false;
         const maybeError = error as { name?: string; message?: string };
         return maybeError.name === 'AbortError' || maybeError.message?.toLowerCase().includes('aborted') === true;
-    };
+    }, []);
 
     const flushViabilityStreamBuffer = useCallback(() => {
         if (viabilityStreamTimerRef.current) {
@@ -124,6 +124,28 @@ export const Detail: React.FC = () => {
         });
     }, [clearNewDraftState]);
 
+    const handlePersistFailure = useCallback((error: unknown) => {
+        if (isAbortError(error)) return;
+
+        const message = error instanceof Error ? error.message.toLowerCase() : '';
+        const isTransientNetworkError = (
+            message.includes('network error')
+            || message.includes('failed to fetch')
+            || message.includes('load failed')
+        );
+
+        // Navigation/unmount can interrupt background saves in some browsers.
+        if (!isMountedRef.current && isTransientNetworkError) {
+            return;
+        }
+
+        console.warn('Failed to persist idea changes:', error);
+    }, [isAbortError]);
+
+    const persistIdeaFireAndForget = useCallback((ideaToSave: Idea, options?: RequestInit) => {
+        void persistIdea(ideaToSave, options).catch(handlePersistFailure);
+    }, [persistIdea, handlePersistFailure]);
+
     // Cleanup timeout on unmount AND flush any pending save
     useEffect(() => {
         return () => {
@@ -131,11 +153,11 @@ export const Detail: React.FC = () => {
                 clearTimeout(saveTimeoutRef.current);
                 // Flush any pending save immediately on unmount
                 if (latestIdeaRef.current) {
-                    void persistIdea(latestIdeaRef.current, { keepalive: true });
+                    persistIdeaFireAndForget(latestIdeaRef.current, { keepalive: true });
                 }
             }
         };
-    }, [persistIdea]);
+    }, [persistIdeaFireAndForget]);
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -166,7 +188,7 @@ export const Detail: React.FC = () => {
 
         saveTimeoutRef.current = setTimeout(() => {
             if (latestIdeaRef.current) {
-                void persistIdea(latestIdeaRef.current);
+                persistIdeaFireAndForget(latestIdeaRef.current);
             }
         }, 1000);
     };
@@ -180,6 +202,10 @@ export const Detail: React.FC = () => {
         latestIdeaRef.current = ideaToSave;
         return persistIdea(ideaToSave, options);
     }, [persistIdea]);
+
+    const persistIdeaImmediatelyFireAndForget = useCallback((ideaToSave: Idea, options?: RequestInit) => {
+        void persistIdeaImmediately(ideaToSave, options).catch(handlePersistFailure);
+    }, [persistIdeaImmediately, handlePersistFailure]);
 
     useEffect(() => {
         const init = async () => {
@@ -253,7 +279,7 @@ export const Detail: React.FC = () => {
             setIdea(prev => {
                 if (!prev) return null;
                 const updated = { ...prev, keywords: (keywords || []) };
-                void persistIdeaImmediately(updated);
+                persistIdeaImmediatelyFireAndForget(updated);
                 return updated;
             });
         } catch (e) {
@@ -268,10 +294,10 @@ export const Detail: React.FC = () => {
         setIdea(prev => {
             if (!prev) return null;
             const updated = { ...prev, chatHistory: newHistory };
-            void persistIdeaImmediately(updated);
+            persistIdeaImmediatelyFireAndForget(updated);
             return updated;
         });
-    }, [persistIdeaImmediately]);
+    }, [persistIdeaImmediatelyFireAndForget]);
 
     // Callback to append text to the idea details (e.g. from Chat)
     const handleAppendToNote = useCallback((text: string) => {
@@ -280,16 +306,16 @@ export const Detail: React.FC = () => {
             // Append with a newline if details is not empty
             const newDetails = prev.details ? `${prev.details}\n\n${text}` : text;
             const updated = { ...prev, details: newDetails };
-            void persistIdeaImmediately(updated);
+            persistIdeaImmediatelyFireAndForget(updated);
             return updated;
         });
-    }, [persistIdeaImmediately]);
+    }, [persistIdeaImmediatelyFireAndForget]);
 
     const handleStatusChange = (newStatus: any) => {
         setIdea(prev => {
             if (!prev) return null;
             const updated = { ...prev, status: newStatus };
-            void persistIdeaImmediately(updated);
+            persistIdeaImmediatelyFireAndForget(updated);
             return updated;
         });
     };
@@ -306,7 +332,7 @@ export const Detail: React.FC = () => {
             }
 
             const updated = { ...prev, keywords: [...existingKeywords, keyword] };
-            void persistIdeaImmediately(updated);
+            persistIdeaImmediatelyFireAndForget(updated);
             return updated;
         });
     };
@@ -318,7 +344,7 @@ export const Detail: React.FC = () => {
                 ...prev,
                 keywords: (prev.keywords || []).filter((_, index) => index !== indexToRemove)
             };
-            void persistIdeaImmediately(updated);
+            persistIdeaImmediatelyFireAndForget(updated);
             return updated;
         });
     };
@@ -359,14 +385,19 @@ export const Detail: React.FC = () => {
             flushViabilityStreamBuffer();
         } catch (e) {
             if (!isMountedRef.current || controller?.signal.aborted || isAbortError(e)) return;
-            console.error(e);
             setViabilityError(`Error generating report: ${(e as Error).message}`);
         } finally {
-            viabilityStreamAbortRef.current = null;
-            controller = null;
-            if (isMountedRef.current) {
-                setViabilityLoading(false);
+            if (!controller) {
+                if (isMountedRef.current) {
+                    setViabilityLoading(false);
+                }
+            } else if (viabilityStreamAbortRef.current === controller) {
+                viabilityStreamAbortRef.current = null;
+                if (isMountedRef.current) {
+                    setViabilityLoading(false);
+                }
             }
+            controller = null;
         }
     };
 
@@ -406,14 +437,19 @@ export const Detail: React.FC = () => {
             flushCompetitorStreamBuffer();
         } catch (e) {
             if (!isMountedRef.current || controller?.signal.aborted || isAbortError(e)) return;
-            console.error(e);
             setCompetitorError(`Error generating report: ${(e as Error).message}`);
         } finally {
-            competitorStreamAbortRef.current = null;
-            controller = null;
-            if (isMountedRef.current) {
-                setCompetitorLoading(false);
+            if (!controller) {
+                if (isMountedRef.current) {
+                    setCompetitorLoading(false);
+                }
+            } else if (competitorStreamAbortRef.current === controller) {
+                competitorStreamAbortRef.current = null;
+                if (isMountedRef.current) {
+                    setCompetitorLoading(false);
+                }
             }
+            controller = null;
         }
     };
 

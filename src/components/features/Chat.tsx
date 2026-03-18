@@ -431,7 +431,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                     >
                         <FileText size={14} /> Plan
                     </button>
-                    {loading && (
+                    {isStreaming && (
                         <button
                             onClick={cancelActiveStream}
                             className="btn-text text-xs px-2 py-1"
