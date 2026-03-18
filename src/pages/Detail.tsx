@@ -11,6 +11,7 @@ import { CompetitorAnalysisModal } from '../components/CompetitorAnalysisModal';
 import { ArrowLeft, Sparkles, Trash2, Terminal, Search, Swords } from 'lucide-react';
 
 export const Detail: React.FC = () => {
+    const STREAM_UPDATE_INTERVAL_MS = 100;
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const location = useLocation();
@@ -29,6 +30,13 @@ export const Detail: React.FC = () => {
     const [competitorReport, setCompetitorReport] = useState('');
     const [competitorError, setCompetitorError] = useState<string | null>(null);
     const [showCompetitorModal, setShowCompetitorModal] = useState(false);
+    const viabilityStreamAbortRef = useRef<AbortController | null>(null);
+    const competitorStreamAbortRef = useRef<AbortController | null>(null);
+    const viabilityStreamBufferRef = useRef('');
+    const competitorStreamBufferRef = useRef('');
+    const viabilityStreamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const competitorStreamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isMountedRef = useRef(true);
 
     // Ref to track the latest idea state for debounced saving
     const latestIdeaRef = useRef<Idea | null>(null);
@@ -39,6 +47,68 @@ export const Detail: React.FC = () => {
     useEffect(() => {
         latestIdeaRef.current = idea;
     }, [idea]);
+
+    const isAbortError = (error: unknown): boolean => {
+        if (!error || typeof error !== 'object') return false;
+        const maybeError = error as { name?: string; message?: string };
+        return maybeError.name === 'AbortError' || maybeError.message?.toLowerCase().includes('aborted') === true;
+    };
+
+    const flushViabilityStreamBuffer = useCallback(() => {
+        if (viabilityStreamTimerRef.current) {
+            clearTimeout(viabilityStreamTimerRef.current);
+            viabilityStreamTimerRef.current = null;
+        }
+
+        if (!viabilityStreamBufferRef.current) return;
+
+        const buffered = viabilityStreamBufferRef.current;
+        viabilityStreamBufferRef.current = '';
+        setViabilityReport(prev => prev + buffered);
+    }, []);
+
+    const queueViabilityStreamChunk = useCallback((delta: string) => {
+        if (!delta) return;
+
+        viabilityStreamBufferRef.current += delta;
+        if (viabilityStreamTimerRef.current) return;
+
+        viabilityStreamTimerRef.current = setTimeout(() => {
+            viabilityStreamTimerRef.current = null;
+            if (!viabilityStreamBufferRef.current) return;
+            const buffered = viabilityStreamBufferRef.current;
+            viabilityStreamBufferRef.current = '';
+            setViabilityReport(prev => prev + buffered);
+        }, STREAM_UPDATE_INTERVAL_MS);
+    }, [STREAM_UPDATE_INTERVAL_MS]);
+
+    const flushCompetitorStreamBuffer = useCallback(() => {
+        if (competitorStreamTimerRef.current) {
+            clearTimeout(competitorStreamTimerRef.current);
+            competitorStreamTimerRef.current = null;
+        }
+
+        if (!competitorStreamBufferRef.current) return;
+
+        const buffered = competitorStreamBufferRef.current;
+        competitorStreamBufferRef.current = '';
+        setCompetitorReport(prev => prev + buffered);
+    }, []);
+
+    const queueCompetitorStreamChunk = useCallback((delta: string) => {
+        if (!delta) return;
+
+        competitorStreamBufferRef.current += delta;
+        if (competitorStreamTimerRef.current) return;
+
+        competitorStreamTimerRef.current = setTimeout(() => {
+            competitorStreamTimerRef.current = null;
+            if (!competitorStreamBufferRef.current) return;
+            const buffered = competitorStreamBufferRef.current;
+            competitorStreamBufferRef.current = '';
+            setCompetitorReport(prev => prev + buffered);
+        }, STREAM_UPDATE_INTERVAL_MS);
+    }, [STREAM_UPDATE_INTERVAL_MS]);
 
     const clearNewDraftState = useCallback(() => {
         if (!isNewDraftRef.current) return;
@@ -66,6 +136,25 @@ export const Detail: React.FC = () => {
             }
         };
     }, [persistIdea]);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+            viabilityStreamAbortRef.current?.abort();
+            competitorStreamAbortRef.current?.abort();
+
+            if (viabilityStreamTimerRef.current) {
+                clearTimeout(viabilityStreamTimerRef.current);
+            }
+            if (competitorStreamTimerRef.current) {
+                clearTimeout(competitorStreamTimerRef.current);
+            }
+
+            viabilityStreamBufferRef.current = '';
+            competitorStreamBufferRef.current = '';
+        };
+    }, []);
 
     const triggerDebouncedSave = (ideaToSave: Idea) => {
         if (saveTimeoutRef.current) {
@@ -237,12 +326,20 @@ export const Detail: React.FC = () => {
     // Handler for viability analysis
     const handleAnalyzeViability = async () => {
         if (!idea || !settings) return;
+        let controller: AbortController | null = null;
 
         try {
+            viabilityStreamAbortRef.current?.abort();
+            viabilityStreamAbortRef.current = null;
             setViabilityReport('');
             setViabilityError(null);
             setShowViabilityModal(true);
             setViabilityLoading(true);
+            viabilityStreamBufferRef.current = '';
+            if (viabilityStreamTimerRef.current) {
+                clearTimeout(viabilityStreamTimerRef.current);
+                viabilityStreamTimerRef.current = null;
+            }
 
             if (settings.provider === 'gemini' && !settings.geminiKey) {
                 setViabilityLoading(false);
@@ -250,26 +347,46 @@ export const Detail: React.FC = () => {
                 return;
             }
 
-            await aiService.generateViabilityReportStream(idea, settings, (chunk) => {
-                setViabilityReport(chunk);
-            });
+            controller = new AbortController();
+            viabilityStreamAbortRef.current = controller;
+
+            await aiService.generateViabilityReportStream(
+                idea,
+                settings,
+                queueViabilityStreamChunk,
+                { emitDelta: true, signal: controller.signal }
+            );
+            flushViabilityStreamBuffer();
         } catch (e) {
+            if (!isMountedRef.current || controller?.signal.aborted || isAbortError(e)) return;
             console.error(e);
             setViabilityError(`Error generating report: ${(e as Error).message}`);
         } finally {
-            setViabilityLoading(false);
+            viabilityStreamAbortRef.current = null;
+            controller = null;
+            if (isMountedRef.current) {
+                setViabilityLoading(false);
+            }
         }
     };
 
     // Handler for competitor analysis
     const handleAnalyzeCompetitors = async () => {
         if (!idea || !settings) return;
+        let controller: AbortController | null = null;
 
         try {
+            competitorStreamAbortRef.current?.abort();
+            competitorStreamAbortRef.current = null;
             setCompetitorReport('');
             setCompetitorError(null);
             setShowCompetitorModal(true);
             setCompetitorLoading(true);
+            competitorStreamBufferRef.current = '';
+            if (competitorStreamTimerRef.current) {
+                clearTimeout(competitorStreamTimerRef.current);
+                competitorStreamTimerRef.current = null;
+            }
 
             if (settings.provider === 'gemini' && !settings.geminiKey) {
                 setCompetitorLoading(false);
@@ -277,16 +394,52 @@ export const Detail: React.FC = () => {
                 return;
             }
 
-            await aiService.analyzeCompetitorsStream(idea, settings, (chunk) => {
-                setCompetitorReport(chunk);
-            });
+            controller = new AbortController();
+            competitorStreamAbortRef.current = controller;
+
+            await aiService.analyzeCompetitorsStream(
+                idea,
+                settings,
+                queueCompetitorStreamChunk,
+                { emitDelta: true, signal: controller.signal }
+            );
+            flushCompetitorStreamBuffer();
         } catch (e) {
+            if (!isMountedRef.current || controller?.signal.aborted || isAbortError(e)) return;
             console.error(e);
             setCompetitorError(`Error generating report: ${(e as Error).message}`);
         } finally {
-            setCompetitorLoading(false);
+            competitorStreamAbortRef.current = null;
+            controller = null;
+            if (isMountedRef.current) {
+                setCompetitorLoading(false);
+            }
         }
     };
+
+    const cancelViabilityAnalysis = useCallback(() => {
+        flushViabilityStreamBuffer();
+        viabilityStreamAbortRef.current?.abort();
+        viabilityStreamAbortRef.current = null;
+        if (viabilityStreamTimerRef.current) {
+            clearTimeout(viabilityStreamTimerRef.current);
+            viabilityStreamTimerRef.current = null;
+        }
+        viabilityStreamBufferRef.current = '';
+        setViabilityLoading(false);
+    }, [flushViabilityStreamBuffer]);
+
+    const cancelCompetitorAnalysis = useCallback(() => {
+        flushCompetitorStreamBuffer();
+        competitorStreamAbortRef.current?.abort();
+        competitorStreamAbortRef.current = null;
+        if (competitorStreamTimerRef.current) {
+            clearTimeout(competitorStreamTimerRef.current);
+            competitorStreamTimerRef.current = null;
+        }
+        competitorStreamBufferRef.current = '';
+        setCompetitorLoading(false);
+    }, [flushCompetitorStreamBuffer]);
 
     if (loading) return <div className="p-5">Loading...</div>;
     if (!idea) return <div className="p-5">Idea not found</div>;
@@ -439,6 +592,7 @@ export const Detail: React.FC = () => {
                 ideaTitle={idea.title}
                 report={viabilityReport}
                 error={viabilityError}
+                onCancel={cancelViabilityAnalysis}
                 onClose={() => setShowViabilityModal(false)}
             />
 
@@ -448,6 +602,7 @@ export const Detail: React.FC = () => {
                 ideaTitle={idea.title}
                 report={competitorReport}
                 error={competitorError}
+                onCancel={cancelCompetitorAnalysis}
                 onClose={() => setShowCompetitorModal(false)}
             />
 
