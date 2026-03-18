@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu, AlertTriangle } from 'lucide-react';
 import { dbService } from '../services/db';
@@ -495,31 +495,45 @@ export const Home: React.FC = () => {
     };
 
 
-    // Filter and Sort Logic
-    // Optimization: Create a Set of valid folder IDs for O(1) lookup
-    const validFolderIds = new Set(folders.map(f => f.id));
+    const validFolderIds = useMemo(() => new Set(folders.map(f => f.id)), [folders]);
+    const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
-    const filteredIdeas = ideas
-        .filter(idea => {
-            const matchesSearch = (idea.title + idea.details + (idea.keywords || []).join(' ')).toLowerCase().includes(searchQuery.toLowerCase());
-            const matchesStatus = statusFilter === 'all' || idea.status === statusFilter;
-            const matchesFolder = () => {
-                if (selectedFolderId === 'all') return true;
-                if (selectedFolderId === 'uncategorized') {
-                    // Match if no folder_id OR if folder_id doesn't exist in current folders list (orphan)
-                    return !idea.folder_id || !validFolderIds.has(idea.folder_id);
-                }
-                return idea.folder_id === selectedFolderId;
-            };
+    const filteredIdeas = useMemo(() => {
+        return ideas
+            .filter(idea => {
+                const matchesSearch = !normalizedSearchQuery || (
+                    idea.title + idea.details + (idea.keywords || []).join(' ')
+                ).toLowerCase().includes(normalizedSearchQuery);
+                const matchesStatus = statusFilter === 'all' || idea.status === statusFilter;
+                const matchesFolder = () => {
+                    if (selectedFolderId === 'all') return true;
+                    if (selectedFolderId === 'uncategorized') {
+                        // Match if no folder_id OR if folder_id doesn't exist in current folders list (orphan)
+                        return !idea.folder_id || !validFolderIds.has(idea.folder_id);
+                    }
+                    return idea.folder_id === selectedFolderId;
+                };
 
-            return matchesSearch && matchesStatus && matchesFolder();
-        })
-        .sort((a, b) => {
-            if (sortOption === 'newest') return b.timestamp - a.timestamp;
-            if (sortOption === 'oldest') return a.timestamp - b.timestamp;
-            if (sortOption === 'az') return a.title.localeCompare(b.title);
-            return 0;
+                return matchesSearch && matchesStatus && matchesFolder();
+            })
+            .sort((a, b) => {
+                if (sortOption === 'newest') return b.timestamp - a.timestamp;
+                if (sortOption === 'oldest') return a.timestamp - b.timestamp;
+                if (sortOption === 'az') return a.title.localeCompare(b.title);
+                return 0;
+            });
+    }, [ideas, normalizedSearchQuery, statusFilter, selectedFolderId, sortOption, validFolderIds]);
+
+    const groupedIdeasByFolder = useMemo(() => {
+        if (selectedFolderId !== 'all') return null;
+        const groupedIdeas: Record<string, Idea[]> = {};
+        filteredIdeas.forEach((idea) => {
+            const folderId = (idea.folder_id && validFolderIds.has(idea.folder_id)) ? idea.folder_id : 'uncategorized';
+            if (!groupedIdeas[folderId]) groupedIdeas[folderId] = [];
+            groupedIdeas[folderId].push(idea);
         });
+        return groupedIdeas;
+    }, [selectedFolderId, filteredIdeas, validFolderIds]);
 
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -745,13 +759,7 @@ export const Home: React.FC = () => {
                                 );
 
                                 if (selectedFolderId === 'all') {
-                                    // Group ideas logic
-                                    const groupedIdeas: Record<string, Idea[]> = {};
-                                    filteredIdeas.forEach(idea => {
-                                        const fId = (idea.folder_id && validFolderIds.has(idea.folder_id)) ? idea.folder_id : 'uncategorized';
-                                        if (!groupedIdeas[fId]) groupedIdeas[fId] = [];
-                                        groupedIdeas[fId].push(idea);
-                                    });
+                                    const groupedIdeas = groupedIdeasByFolder || {};
 
                                     return (
                                         <div className="space-y-10">

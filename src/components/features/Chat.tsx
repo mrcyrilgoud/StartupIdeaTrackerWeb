@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, FileText, Download, PlusCircle, Undo, Sparkles, Target, Puzzle, Scale, Users } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, FileText, Download, PlusCircle, Undo, Sparkles, Target, Puzzle, Scale, Users, Square } from 'lucide-react';
 import { Idea, ChatMessage, AppSettings } from '../../types';
 import { aiService } from '../../services/ai';
 import { dbService } from '../../services/db';
@@ -49,12 +49,17 @@ interface ChatProps {
 }
 
 export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }) => {
+    const STREAM_UPDATE_INTERVAL_MS = 75;
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [isStreaming, setIsStreaming] = useState(false);
     const [streamingContent, setStreamingContent] = useState('');
+    const streamBufferRef = useRef('');
+    const streamUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const activeStreamAbortRef = useRef<AbortController | null>(null);
+    const isMountedRef = useRef(true);
 
     const safeHistory = idea.chatHistory || [];
 
@@ -65,6 +70,56 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [safeHistory]);
+
+    const isAbortError = (error: unknown): boolean => {
+        if (!error || typeof error !== 'object') return false;
+        const maybeError = error as { name?: string; message?: string };
+        return maybeError.name === 'AbortError' || maybeError.message?.toLowerCase().includes('aborted') === true;
+    };
+
+    const flushStreamBuffer = useCallback(() => {
+        if (streamUpdateTimerRef.current) {
+            clearTimeout(streamUpdateTimerRef.current);
+            streamUpdateTimerRef.current = null;
+        }
+
+        if (!streamBufferRef.current) return;
+
+        const buffered = streamBufferRef.current;
+        streamBufferRef.current = '';
+        setStreamingContent(prev => prev + buffered);
+    }, []);
+
+    const queueStreamChunk = useCallback((delta: string) => {
+        if (!delta) return;
+
+        streamBufferRef.current += delta;
+        if (streamUpdateTimerRef.current) return;
+
+        streamUpdateTimerRef.current = setTimeout(() => {
+            streamUpdateTimerRef.current = null;
+            if (!streamBufferRef.current) return;
+            const buffered = streamBufferRef.current;
+            streamBufferRef.current = '';
+            setStreamingContent(prev => prev + buffered);
+        }, STREAM_UPDATE_INTERVAL_MS);
+    }, [STREAM_UPDATE_INTERVAL_MS]);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+            activeStreamAbortRef.current?.abort();
+            if (streamUpdateTimerRef.current) {
+                clearTimeout(streamUpdateTimerRef.current);
+            }
+            streamBufferRef.current = '';
+        };
+    }, []);
+
+    const cancelActiveStream = useCallback(() => {
+        activeStreamAbortRef.current?.abort();
+    }, []);
 
     const sendMessage = async () => {
         if (!input.trim()) return;
@@ -94,13 +149,24 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         setLoading(true);
         setIsStreaming(true);
         setStreamingContent('');
+        streamBufferRef.current = '';
+        if (streamUpdateTimerRef.current) {
+            clearTimeout(streamUpdateTimerRef.current);
+            streamUpdateTimerRef.current = null;
+        }
+        let controller: AbortController | null = new AbortController();
+        activeStreamAbortRef.current = controller;
 
         try {
-            let finalOutput = '';
-            await aiService.chatStream(userMsg.content, historyWithUser, idea, settings, (chunk) => {
-                finalOutput = chunk;
-                setStreamingContent(chunk);
-            });
+            const finalOutput = await aiService.chatStream(
+                userMsg.content,
+                historyWithUser,
+                idea,
+                settings,
+                queueStreamChunk,
+                { emitDelta: true, signal: controller.signal }
+            );
+            flushStreamBuffer();
 
             const aiMsg: ChatMessage = {
                 id: uuidv4(),
@@ -111,6 +177,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
 
             onChatUpdate([...historyWithUser, aiMsg]);
         } catch (error) {
+            if (!isMountedRef.current || controller?.signal.aborted || isAbortError(error)) return;
             const errorMsg: ChatMessage = {
                 id: uuidv4(),
                 role: 'system',
@@ -119,9 +186,20 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             };
             onChatUpdate([...historyWithUser, errorMsg]);
         } finally {
-            setLoading(false);
-            setIsStreaming(false);
-            setStreamingContent('');
+            if (activeStreamAbortRef.current === controller) {
+                activeStreamAbortRef.current = null;
+            }
+            controller = null;
+            if (isMountedRef.current) {
+                setLoading(false);
+                setIsStreaming(false);
+                setStreamingContent('');
+            }
+            streamBufferRef.current = '';
+            if (streamUpdateTimerRef.current) {
+                clearTimeout(streamUpdateTimerRef.current);
+                streamUpdateTimerRef.current = null;
+            }
         }
     };
 
@@ -178,13 +256,24 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         setLoading(true);
         setIsStreaming(true);
         setStreamingContent('');
+        streamBufferRef.current = '';
+        if (streamUpdateTimerRef.current) {
+            clearTimeout(streamUpdateTimerRef.current);
+            streamUpdateTimerRef.current = null;
+        }
+        let controller: AbortController | null = new AbortController();
+        activeStreamAbortRef.current = controller;
 
         try {
-            let finalOutput = '';
-            await aiService.chatStream(promptText, historyWithUser, idea, settings, (chunk) => {
-                finalOutput = chunk;
-                setStreamingContent(chunk);
-            });
+            const finalOutput = await aiService.chatStream(
+                promptText,
+                historyWithUser,
+                idea,
+                settings,
+                queueStreamChunk,
+                { emitDelta: true, signal: controller.signal }
+            );
+            flushStreamBuffer();
             const aiMsg: ChatMessage = {
                 id: uuidv4(),
                 role: 'assistant',
@@ -193,6 +282,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             };
             onChatUpdate([...historyWithUser, aiMsg]);
         } catch (error) {
+            if (!isMountedRef.current || controller?.signal.aborted || isAbortError(error)) return;
             const errorMsg: ChatMessage = {
                 id: uuidv4(),
                 role: 'system',
@@ -201,9 +291,20 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
             };
             onChatUpdate([...historyWithUser, errorMsg]);
         } finally {
-            setLoading(false);
-            setIsStreaming(false);
-            setStreamingContent('');
+            if (activeStreamAbortRef.current === controller) {
+                activeStreamAbortRef.current = null;
+            }
+            controller = null;
+            if (isMountedRef.current) {
+                setLoading(false);
+                setIsStreaming(false);
+                setStreamingContent('');
+            }
+            streamBufferRef.current = '';
+            if (streamUpdateTimerRef.current) {
+                clearTimeout(streamUpdateTimerRef.current);
+                streamUpdateTimerRef.current = null;
+            }
         }
     };
 
@@ -330,6 +431,15 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                     >
                         <FileText size={14} /> Plan
                     </button>
+                    {isStreaming && (
+                        <button
+                            onClick={cancelActiveStream}
+                            className="btn-text text-xs px-2 py-1"
+                            title="Cancel in-progress AI request"
+                        >
+                            <Square size={14} /> Stop
+                        </button>
+                    )}
                 </div>
             </div>
 

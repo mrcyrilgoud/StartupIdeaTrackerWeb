@@ -25,28 +25,56 @@ export interface FolderSuggestion {
     ideaIds: string[];
 }
 
+export interface StreamOptions {
+    signal?: AbortSignal;
+    emitDelta?: boolean;
+}
+
+export interface RequestOptions {
+    signal?: AbortSignal;
+}
+
 export const aiService = {
-    async generateResponse(prompt: string, settings: AppSettings, thinking: boolean = false, jsonMode: boolean = false, image?: string): Promise<string> {
+    async generateResponse(
+        prompt: string,
+        settings: AppSettings,
+        thinking: boolean = false,
+        jsonMode: boolean = false,
+        image?: string,
+        options: RequestOptions = {}
+    ): Promise<string> {
         if (settings.provider === 'gemini') {
-            return this.generateGemini(prompt, settings.geminiKey, thinking, jsonMode, image);
+            return this.generateGemini(prompt, settings.geminiKey, thinking, jsonMode, image, options);
         } else if (settings.provider === 'cli_proxy') {
-            return this.generateCliProxy(prompt, settings, jsonMode);
+            return this.generateCliProxy(prompt, settings, jsonMode, options);
         } else {
-            return this.generateOllama(prompt, settings, jsonMode);
+            return this.generateOllama(prompt, settings, jsonMode, options);
         }
     },
 
-    async generateResponseStream(prompt: string, settings: AppSettings, onChunk: (text: string) => void, thinking: boolean = false, image?: string): Promise<string> {
+    async generateResponseStream(
+        prompt: string,
+        settings: AppSettings,
+        onChunk: (text: string) => void,
+        thinking: boolean = false,
+        image?: string,
+        options: StreamOptions = {}
+    ): Promise<string> {
         if (settings.provider === 'gemini') {
-            return this.generateGeminiStream(prompt, settings.geminiKey, onChunk, thinking, image);
+            return this.generateGeminiStream(prompt, settings.geminiKey, onChunk, thinking, image, options);
         } else if (settings.provider === 'cli_proxy') {
-            return this.generateCliProxyStream(prompt, settings, onChunk);
+            return this.generateCliProxyStream(prompt, settings, onChunk, options);
         } else {
-            return this.generateOllamaStream(prompt, settings, onChunk, false);
+            return this.generateOllamaStream(prompt, settings, onChunk, false, options);
         }
     },
 
-    async generateCliProxyStream(prompt: string, settings: AppSettings, onChunk: (text: string) => void): Promise<string> {
+    async generateCliProxyStream(
+        prompt: string,
+        settings: AppSettings,
+        onChunk: (text: string) => void,
+        options: StreamOptions = {}
+    ): Promise<string> {
         let tool = 'gemini'; // default
         if (settings.cliCommandTemplate) {
             const firstWord = settings.cliCommandTemplate.split(' ')[0].toLowerCase();
@@ -58,6 +86,7 @@ export const aiService = {
         const response = await fetch('http://localhost:3333/api/low-level-stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: options.signal,
             body: JSON.stringify({
                 tool: tool,
                 prompt: prompt
@@ -89,7 +118,7 @@ export const aiService = {
                         const parsed = JSON.parse(jsonStr);
                         if (parsed.response) {
                             fullText += parsed.response;
-                            onChunk(fullText);
+                            onChunk(options.emitDelta ? parsed.response : fullText);
                         } else if (parsed.error) {
                             throw new Error(parsed.error);
                         }
@@ -102,7 +131,12 @@ export const aiService = {
         return fullText;
     },
 
-    async generateCliProxy(prompt: string, settings: AppSettings, jsonMode: boolean = false): Promise<string> {
+    async generateCliProxy(
+        prompt: string,
+        settings: AppSettings,
+        jsonMode: boolean = false,
+        options: RequestOptions = {}
+    ): Promise<string> {
         // Extract tool from the template if possible, otherwise default to context
         let tool = 'gemini'; // default
         if (settings.cliCommandTemplate) {
@@ -122,6 +156,7 @@ export const aiService = {
             const response = await fetch('http://localhost:3333/api/low-level', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: options.signal,
                 body: JSON.stringify({
                     tool: tool,
                     prompt: finalPrompt
@@ -136,12 +171,23 @@ export const aiService = {
             const data = await response.json();
             return data.response;
         } catch (e: any) {
+            const message = String(e?.message || '').toLowerCase();
+            if (e?.name === 'AbortError' || message.includes('aborted')) {
+                throw e;
+            }
             console.error("CLI Proxy Error:", e);
             throw new Error(`CLI Proxy failed. Is the companion server running at localhost:3333? Details: ${e.message}`);
         }
     },
 
-    async generateGeminiStream(prompt: string, apiKey: string, onChunk: (text: string) => void, thinking: boolean = false, image?: string): Promise<string> {
+    async generateGeminiStream(
+        prompt: string,
+        apiKey: string,
+        onChunk: (text: string) => void,
+        thinking: boolean = false,
+        image?: string,
+        options: StreamOptions = {}
+    ): Promise<string> {
         const model = thinking ? 'gemini-2.5-pro' : 'gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
@@ -152,6 +198,7 @@ export const aiService = {
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: options.signal,
             body: JSON.stringify(body)
         });
 
@@ -181,7 +228,7 @@ export const aiService = {
                         const textChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
                         if (textChunk) {
                             fullText += textChunk;
-                            onChunk(fullText);
+                            onChunk(options.emitDelta ? textChunk : fullText);
                         }
                     } catch (e) {
                         // ignore parse error for incomplete chunks
@@ -192,7 +239,14 @@ export const aiService = {
         return fullText;
     },
 
-    async generateGemini(prompt: string, apiKey: string, thinking: boolean = false, jsonMode: boolean = false, image?: string): Promise<string> {
+    async generateGemini(
+        prompt: string,
+        apiKey: string,
+        thinking: boolean = false,
+        jsonMode: boolean = false,
+        image?: string,
+        options: RequestOptions = {}
+    ): Promise<string> {
         // Use thinking model if requested, otherwise standard verified model
         const model = thinking ? 'gemini-2.5-pro' : 'gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -219,6 +273,7 @@ export const aiService = {
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: options.signal,
             body: JSON.stringify(body)
         });
 
@@ -231,7 +286,13 @@ export const aiService = {
         return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     },
 
-    async generateOllamaStream(prompt: string, settings: AppSettings, onChunk: (text: string) => void, jsonMode: boolean = false): Promise<string> {
+    async generateOllamaStream(
+        prompt: string,
+        settings: AppSettings,
+        onChunk: (text: string) => void,
+        jsonMode: boolean = false,
+        options: StreamOptions = {}
+    ): Promise<string> {
         const url = `${settings.ollamaEndpoint}/api/generate`;
         const body: any = {
             model: settings.ollamaModel,
@@ -243,6 +304,7 @@ export const aiService = {
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: options.signal,
             body: JSON.stringify(body)
         });
 
@@ -266,7 +328,7 @@ export const aiService = {
                     const parsed = JSON.parse(line);
                     if (parsed.response) {
                         fullText += parsed.response;
-                        onChunk(fullText);
+                        onChunk(options.emitDelta ? parsed.response : fullText);
                     }
                 } catch (e) {
                     // Ignore JSON parse errors on partial chunks
@@ -276,7 +338,12 @@ export const aiService = {
         return fullText;
     },
 
-    async generateOllama(prompt: string, settings: AppSettings, jsonMode: boolean = false): Promise<string> {
+    async generateOllama(
+        prompt: string,
+        settings: AppSettings,
+        jsonMode: boolean = false,
+        options: RequestOptions = {}
+    ): Promise<string> {
         const url = `${settings.ollamaEndpoint}/api/generate`;
         const body: any = {
             model: settings.ollamaModel,
@@ -291,6 +358,7 @@ export const aiService = {
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: options.signal,
             body: JSON.stringify(body)
         });
 
@@ -549,7 +617,7 @@ export const aiService = {
     },
 
     // High-level methods
-    async extractKeywords(idea: Idea, settings: AppSettings): Promise<string[]> {
+    async extractKeywords(idea: Idea, settings: AppSettings, options: RequestOptions = {}): Promise<string[]> {
         const prompt = `
       Analyze the following startup idea and extract 5 key conceptually relevant keywords.
       Return ONLY the keywords separated by commas.
@@ -558,11 +626,18 @@ export const aiService = {
       Details: ${idea.details}
       `;
 
-        const response = await this.generateResponse(prompt, settings, false); // Use flash model
+        const response = await this.generateResponse(prompt, settings, false, false, undefined, options); // Use flash model
         return response.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
     },
 
-    async chatStream(prompt: string, history: ChatMessage[], contextIdea: Idea, settings: AppSettings, onChunk: (text: string) => void): Promise<string> {
+    async chatStream(
+        prompt: string,
+        history: ChatMessage[],
+        contextIdea: Idea,
+        settings: AppSettings,
+        onChunk: (text: string) => void,
+        options: StreamOptions = {}
+    ): Promise<string> {
         const historyTranscript = history.map(msg =>
             `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
         ).join('\n');
@@ -582,7 +657,7 @@ export const aiService = {
       Reply directly to the user's last message, maintaining the context of the startup idea.
       `;
 
-        return this.generateResponseStream(fullContext, settings, onChunk, false); // Use fast flash model
+        return this.generateResponseStream(fullContext, settings, onChunk, false, undefined, options); // Use fast flash model
     },
 
     async chat(prompt: string, history: ChatMessage[], contextIdea: Idea, settings: AppSettings): Promise<string> {
@@ -608,7 +683,12 @@ export const aiService = {
         return this.generateResponse(fullContext, settings, false); // Use fast flash model
     },
 
-    async generateViabilityReportStream(idea: Idea, settings: AppSettings, onChunk: (text: string) => void): Promise<string> {
+    async generateViabilityReportStream(
+        idea: Idea,
+        settings: AppSettings,
+        onChunk: (text: string) => void,
+        options: StreamOptions = {}
+    ): Promise<string> {
         const prompt = `
 You are a seasoned business analyst and market strategist. Your task is to critically examine the business viability of the following startup idea. Be thorough, objective, and brutally honest.
 
@@ -668,7 +748,7 @@ Provide an honest assessment with a viability rating (Low/Medium/High) and your 
 
 Be specific, cite examples of real competitors when possible, and provide actionable insights.
 `;
-        return this.generateResponseStream(prompt, settings, onChunk, true, undefined);
+        return this.generateResponseStream(prompt, settings, onChunk, true, undefined, options);
     },
 
     async generateViabilityReport(idea: Idea, settings: AppSettings): Promise<string> {
@@ -736,7 +816,12 @@ Be specific, cite examples of real competitors when possible, and provide action
         return this.generateResponse(prompt, settings, true, false);
     },
 
-    async analyzeCompetitorsStream(idea: Idea, settings: AppSettings, onChunk: (text: string) => void): Promise<string> {
+    async analyzeCompetitorsStream(
+        idea: Idea,
+        settings: AppSettings,
+        onChunk: (text: string) => void,
+        options: StreamOptions = {}
+    ): Promise<string> {
         const prompt = `
 You are a strategic business consultant specializing in competitive intelligence. Your task is to perform a deep-dive competitor analysis for the following startup idea.
 
@@ -772,7 +857,7 @@ Propose specific "Blue Ocean" moves or features that would make the competition 
 ## Final Strategic Recommendation
 A concluding paragraph on the best path to enter the market.
 `;
-        return this.generateResponseStream(prompt, settings, onChunk, true);
+        return this.generateResponseStream(prompt, settings, onChunk, true, undefined, options);
     },
 
     async analyzeCompetitors(idea: Idea, settings: AppSettings): Promise<string> {
@@ -816,7 +901,12 @@ A concluding paragraph on the best path to enter the market.
         return this.generateResponse(prompt, settings, true, false);
     },
 
-    async brainstorm(prompt: string, history: ChatMessage[], settings: AppSettings): Promise<string> {
+    async brainstorm(
+        prompt: string,
+        history: ChatMessage[],
+        settings: AppSettings,
+        options: RequestOptions = {}
+    ): Promise<string> {
         const historyTranscript = history.map(msg =>
             `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
         ).join('\n');
@@ -840,10 +930,14 @@ A concluding paragraph on the best path to enter the market.
       Reply directly to the user's last message.
       `;
 
-        return this.generateResponse(fullContext, settings, false);
+        return this.generateResponse(fullContext, settings, false, false, undefined, options);
     },
 
-    async summarizeIdeaFromChat(history: ChatMessage[], settings: AppSettings): Promise<GeneratedIdea> {
+    async summarizeIdeaFromChat(
+        history: ChatMessage[],
+        settings: AppSettings,
+        options: RequestOptions = {}
+    ): Promise<GeneratedIdea> {
         const historyTranscript = history.map(msg =>
             `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
         ).join('\n');
@@ -861,7 +955,7 @@ A concluding paragraph on the best path to enter the market.
         Do NOT include any markdown formatting or code fences (like \`\`\`json). Return ONLY the raw JSON object.
         `;
 
-        const responseText = await this.generateResponse(prompt, settings, false, true);
+        const responseText = await this.generateResponse(prompt, settings, false, true, undefined, options);
 
         try {
             const firstBrace = responseText.indexOf('{');

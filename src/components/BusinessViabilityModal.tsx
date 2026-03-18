@@ -8,6 +8,7 @@ interface BusinessViabilityModalProps {
     ideaTitle: string;
     report: string;
     error?: string | null;
+    onCancel?: () => void;
     onClose: () => void;
 }
 
@@ -52,6 +53,7 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
     ideaTitle,
     report,
     error,
+    onCancel,
     onClose
 }) => {
     useEffect(() => {
@@ -184,14 +186,25 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                             {ideaTitle}
                         </p>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="btn-icon p-2"
-                        aria-label="Close business viability report"
-                        title="Close"
-                    >
-                        <X size={20} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {loading && onCancel && (
+                            <button
+                                onClick={onCancel}
+                                className="btn-text text-xs px-3 py-1.5"
+                                title="Cancel report generation"
+                            >
+                                Cancel
+                            </button>
+                        )}
+                        <button
+                            onClick={onClose}
+                            className="btn-icon p-2"
+                            aria-label="Close business viability report"
+                            title="Close"
+                        >
+                            <X size={20} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Content */}
@@ -221,13 +234,17 @@ export const BusinessViabilityModal: React.FC<BusinessViabilityModalProps> = ({
                                 Go to Settings
                             </button>
                         </div>
+                    ) : loading ? (
+                        <div className="relative pr-8">
+                            <div className="absolute top-0 right-0 pointer-events-none">
+                                <div className="w-5 h-5 border-2 border-border border-t-accent rounded-full animate-spin" />
+                            </div>
+                            <pre className="whitespace-pre-wrap text-[0.95rem] leading-relaxed text-text-primary m-0">
+                                {report}
+                            </pre>
+                        </div>
                     ) : (
                         <div className="markdown-body leading-relaxed text-[0.95rem] text-text-primary relative pr-8">
-                            {loading && report && (
-                                <div className="absolute top-0 right-0 pointer-events-none">
-                                    <div className="w-5 h-5 border-2 border-border border-t-accent rounded-full animate-spin" />
-                                </div>
-                            )}
                             <ReactMarkdown
                                 components={{
                                     h1: ({ node, ...props }) => <h1 className="text-text-primary border-b border-border pb-2.5 mt-6 text-2xl" {...props} />,

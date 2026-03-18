@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Sparkles, Plus, ArrowRight } from 'lucide-react';
+import { Send, Sparkles, Plus, ArrowRight, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatMessage, AppSettings, Idea } from '../../types';
@@ -14,6 +14,8 @@ export const HomeChat: React.FC = () => {
     const [creatingIdea, setCreatingIdea] = useState(false);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const activeRequestAbortRef = useRef<AbortController | null>(null);
+    const isMountedRef = useRef(true);
 
     useEffect(() => {
         dbService.getSettings().then(setSettings);
@@ -24,6 +26,25 @@ export const HomeChat: React.FC = () => {
             bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
     }, [history]);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+            activeRequestAbortRef.current?.abort();
+            activeRequestAbortRef.current = null;
+        };
+    }, []);
+
+    const isAbortError = (error: unknown): boolean => {
+        if (!error || typeof error !== 'object') return false;
+        const maybeError = error as { name?: string; message?: string };
+        return maybeError.name === 'AbortError' || maybeError.message?.toLowerCase().includes('aborted') === true;
+    };
+
+    const cancelActiveRequest = () => {
+        activeRequestAbortRef.current?.abort();
+    };
 
     const handleSend = async () => {
         if (!input.trim()) return;
@@ -51,9 +72,11 @@ export const HomeChat: React.FC = () => {
         }
 
         setLoading(true);
+        const controller = new AbortController();
+        activeRequestAbortRef.current = controller;
 
         try {
-            const rawResponse = await aiService.brainstorm(userMsg.content, newHistory, settings);
+            const rawResponse = await aiService.brainstorm(userMsg.content, newHistory, settings, { signal: controller.signal });
 
             let response = rawResponse;
             let shouldCreateIdea = false;
@@ -82,6 +105,7 @@ export const HomeChat: React.FC = () => {
                 }, 1000);
             }
         } catch (error) {
+            if (controller.signal.aborted || isAbortError(error)) return;
             console.error(error);
             const errorMsg: ChatMessage = {
                 id: uuidv4(),
@@ -91,7 +115,12 @@ export const HomeChat: React.FC = () => {
             };
             setHistory([...newHistory, errorMsg]);
         } finally {
-            setLoading(false);
+            if (activeRequestAbortRef.current === controller) {
+                activeRequestAbortRef.current = null;
+            }
+            if (isMountedRef.current) {
+                setLoading(false);
+            }
         }
     };
 
@@ -101,12 +130,14 @@ export const HomeChat: React.FC = () => {
 
         if (historyToUse.length === 0 || creatingIdea) return;
         setCreatingIdea(true);
+        const controller = new AbortController();
+        activeRequestAbortRef.current = controller;
 
         try {
             if (!settings) throw new Error("Settings not loaded");
 
             // 1. Summarize conversation into an idea
-            const generatedIdea = await aiService.summarizeIdeaFromChat(historyToUse, settings);
+            const generatedIdea = await aiService.summarizeIdeaFromChat(historyToUse, settings, { signal: controller.signal });
 
             // 2. Create the wrapper Idea object
             const newIdea: Idea = {
@@ -120,24 +151,20 @@ export const HomeChat: React.FC = () => {
                 status: 'draft'
             };
 
-            // 3. Navigate to the new idea page (passing state so we don't need to save to DB yet if we don't want to, 
-            //    or we can save it. The original Home.tsx pattern was navigate with state. 
-            //    Let's stick to that for consistency, but maybe we should save keywords too?)
-
-            // Actually, let's generate keywords too for a complete feeling
-            try {
-                const keywords = await aiService.extractKeywords(newIdea, settings);
-                newIdea.keywords = keywords;
-            } catch (e) {
-                console.warn("Failed to generate keywords", e);
-            }
-
+            // 3. Navigate immediately to keep the transition responsive.
             navigate(`/idea/${newIdea.id}`, { state: { idea: newIdea, isNew: true } });
 
         } catch (error) {
+            if (controller.signal.aborted || isAbortError(error)) return;
             console.error("Failed to create idea", error);
             alert("Failed to create idea from chat. Please try again.");
-            setCreatingIdea(false);
+        } finally {
+            if (activeRequestAbortRef.current === controller) {
+                activeRequestAbortRef.current = null;
+            }
+            if (isMountedRef.current) {
+                setCreatingIdea(false);
+            }
         }
     };
 
@@ -154,18 +181,29 @@ export const HomeChat: React.FC = () => {
                             <Sparkles size={18} />
                             <span>Brainstorming Session</span>
                         </div>
-                        <button
-                            onClick={handleCreateIdea}
-                            disabled={creatingIdea}
-                            className="btn-primary text-xs py-1.5 px-3 shadow-none"
-                        >
-                            {creatingIdea ? 'Creating...' : (
-                                <>
-                                    <Plus size={16} />
-                                    Turn into Idea
-                                </>
+                        <div className="flex items-center gap-2">
+                            {(loading || creatingIdea) && (
+                                <button
+                                    onClick={cancelActiveRequest}
+                                    className="btn-text text-xs py-1.5 px-3"
+                                    title="Cancel in-progress AI request"
+                                >
+                                    <Square size={14} /> Stop
+                                </button>
                             )}
-                        </button>
+                            <button
+                                onClick={handleCreateIdea}
+                                disabled={creatingIdea || loading}
+                                className="btn-primary text-xs py-1.5 px-3 shadow-none"
+                            >
+                                {creatingIdea ? 'Creating...' : (
+                                    <>
+                                        <Plus size={16} />
+                                        Turn into Idea
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
 
                     <div className="h-[400px] overflow-y-auto p-6 flex flex-col gap-4">
