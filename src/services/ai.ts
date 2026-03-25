@@ -34,6 +34,51 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
+function findStreamOverlap(previousText: string, nextText: string): number {
+    const maxOverlap = Math.min(previousText.length, nextText.length);
+
+    for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+        if (previousText.slice(-overlap) === nextText.slice(0, overlap)) {
+            return overlap;
+        }
+    }
+
+    return 0;
+}
+
+function mergeCliProxyStreamText(previousText: string, nextText: string): { fullText: string; delta: string } {
+    if (!nextText) {
+        return { fullText: previousText, delta: '' };
+    }
+
+    if (!previousText) {
+        return { fullText: nextText, delta: nextText };
+    }
+
+    if (nextText === previousText) {
+        return { fullText: previousText, delta: '' };
+    }
+
+    if (nextText.startsWith(previousText)) {
+        return {
+            fullText: nextText,
+            delta: nextText.slice(previousText.length)
+        };
+    }
+
+    if (previousText.startsWith(nextText)) {
+        return { fullText: previousText, delta: '' };
+    }
+
+    const overlapLength = findStreamOverlap(previousText, nextText);
+    const delta = nextText.slice(overlapLength);
+
+    return {
+        fullText: previousText + delta,
+        delta
+    };
+}
+
 export const aiService = {
     async generateResponse(
         prompt: string,
@@ -117,8 +162,17 @@ export const aiService = {
                     try {
                         const parsed = JSON.parse(jsonStr);
                         if (parsed.response) {
-                            fullText += parsed.response;
-                            onChunk(options.emitDelta ? parsed.response : fullText);
+                            const nextChunk = String(parsed.response);
+                            const merged = mergeCliProxyStreamText(fullText, nextChunk);
+                            fullText = merged.fullText;
+
+                            if (options.emitDelta) {
+                                if (merged.delta) {
+                                    onChunk(merged.delta);
+                                }
+                            } else {
+                                onChunk(fullText);
+                            }
                         } else if (parsed.error) {
                             throw new Error(parsed.error);
                         }
