@@ -34,9 +34,30 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
-function mergeCliProxyStreamText(previousText: string, nextText: string): { fullText: string; delta: string } {
+type CliProxyStreamMode = 'snapshot' | 'delta';
+
+function getCliProxyStreamMode(payload: Record<string, unknown>): CliProxyStreamMode {
+    if (payload.streamMode === 'delta' || payload.mode === 'delta' || payload.delta === true) {
+        return 'delta';
+    }
+
+    return 'snapshot';
+}
+
+function mergeCliProxyStreamText(
+    previousText: string,
+    nextText: string,
+    streamMode: CliProxyStreamMode
+): { fullText: string; delta: string } {
     if (!nextText) {
         return { fullText: previousText, delta: '' };
+    }
+
+    if (streamMode === 'delta') {
+        return {
+            fullText: previousText + nextText,
+            delta: nextText
+        };
     }
 
     if (!previousText) {
@@ -59,7 +80,7 @@ function mergeCliProxyStreamText(previousText: string, nextText: string): { full
     }
 
     return {
-        fullText: previousText + nextText,
+        fullText: nextText,
         delta: nextText
     };
 }
@@ -148,7 +169,8 @@ export const aiService = {
                         const parsed = JSON.parse(jsonStr);
                         if (parsed.response) {
                             const nextChunk = String(parsed.response);
-                            const merged = mergeCliProxyStreamText(fullText, nextChunk);
+                            const streamMode = getCliProxyStreamMode(parsed);
+                            const merged = mergeCliProxyStreamText(fullText, nextChunk, streamMode);
                             fullText = merged.fullText;
 
                             if (options.emitDelta) {
