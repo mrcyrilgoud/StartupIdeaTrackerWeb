@@ -34,6 +34,57 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
+type CliProxyStreamMode = 'snapshot' | 'delta';
+
+function getCliProxyStreamMode(payload: Record<string, unknown>): CliProxyStreamMode {
+    if (payload.streamMode === 'delta' || payload.mode === 'delta' || payload.delta === true) {
+        return 'delta';
+    }
+
+    return 'snapshot';
+}
+
+function mergeCliProxyStreamText(
+    previousText: string,
+    nextText: string,
+    streamMode: CliProxyStreamMode
+): { fullText: string; delta: string } {
+    if (!nextText) {
+        return { fullText: previousText, delta: '' };
+    }
+
+    if (streamMode === 'delta') {
+        return {
+            fullText: previousText + nextText,
+            delta: nextText
+        };
+    }
+
+    if (!previousText) {
+        return { fullText: nextText, delta: nextText };
+    }
+
+    if (nextText === previousText) {
+        return { fullText: previousText, delta: '' };
+    }
+
+    if (nextText.startsWith(previousText)) {
+        return {
+            fullText: nextText,
+            delta: nextText.slice(previousText.length)
+        };
+    }
+
+    if (previousText.startsWith(nextText)) {
+        return { fullText: previousText, delta: '' };
+    }
+
+    return {
+        fullText: nextText,
+        delta: nextText
+    };
+}
+
 export const aiService = {
     async generateResponse(
         prompt: string,
@@ -117,8 +168,18 @@ export const aiService = {
                     try {
                         const parsed = JSON.parse(jsonStr);
                         if (parsed.response) {
-                            fullText += parsed.response;
-                            onChunk(options.emitDelta ? parsed.response : fullText);
+                            const nextChunk = String(parsed.response);
+                            const streamMode = getCliProxyStreamMode(parsed);
+                            const merged = mergeCliProxyStreamText(fullText, nextChunk, streamMode);
+                            fullText = merged.fullText;
+
+                            if (options.emitDelta) {
+                                if (merged.delta) {
+                                    onChunk(merged.delta);
+                                }
+                            } else {
+                                onChunk(fullText);
+                            }
                         } else if (parsed.error) {
                             throw new Error(parsed.error);
                         }

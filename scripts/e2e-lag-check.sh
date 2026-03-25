@@ -113,12 +113,7 @@ const makeJsonResponse = (prompt = '') => {
   return 'Mock AI response generated successfully.';
 };
 
-const streamChunks = (res, text, chunkSize = 12, delayMs = 140) => {
-  const chunks = [];
-  for (let i = 0; i < text.length; i += chunkSize) {
-    chunks.push(text.slice(i, i + chunkSize));
-  }
-
+const streamEvents = (res, chunks, delayMs = 140, streamMode = 'delta') => {
   let idx = 0;
   const timer = setInterval(() => {
     if (idx >= chunks.length) {
@@ -127,10 +122,19 @@ const streamChunks = (res, text, chunkSize = 12, delayMs = 140) => {
       return;
     }
 
-    const payload = JSON.stringify({ response: chunks[idx] });
+    const payload = JSON.stringify({ response: chunks[idx], streamMode });
     res.write(`data: ${payload}\n\n`);
     idx += 1;
   }, delayMs);
+};
+
+const streamChunks = (res, text, chunkSize = 12, delayMs = 140, streamMode = 'delta') => {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+
+  streamEvents(res, chunks, delayMs, streamMode);
 };
 
 const server = http.createServer(async (req, res) => {
@@ -171,13 +175,18 @@ const server = http.createServer(async (req, res) => {
         ...CORS_HEADERS,
       });
 
+      if (prompt.includes('Repeat delta fragments exactly.')) {
+        streamEvents(res, ['ha', 'ha'], 140, 'delta');
+        return;
+      }
+
       const responseText = prompt.includes('Business Viability Report')
         ? '# Business Viability Report\n\n## Executive Summary\nMock viability streaming report for E2E validation.\n\n## Business Model Analysis\n- Value proposition has potential\n- Costs should be constrained early\n\n## Final Verdict\nMedium\n'
         : prompt.includes('Competitor Analysis')
           ? '# Competitor Analysis\n\n## Market Landscape Overview\nMock competitor streaming report for E2E validation.\n\n## SWOT Analysis\n- Strength: speed\n- Weakness: narrow scope\n\n## Final Strategic Recommendation\nEnter with focused differentiation.\n'
           : 'This is a streamed mock assistant response to validate throttled rendering.';
 
-      streamChunks(res, responseText);
+      streamChunks(res, responseText, 12, 140, 'delta');
       return;
     }
 
@@ -255,6 +264,11 @@ run_pw run-code "async (page) => {
   await page.getByRole('textbox', { name: 'Ask about your idea...' }).fill('Provide a streamed checklist response.');
   await page.getByRole('button').filter({ hasText: /^$/ }).nth(4).click();
   await page.getByText('This is a streamed mock assistant response to validate throttled rendering.').waitFor({ timeout: 10000 });
+
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).fill('Repeat delta fragments exactly.');
+  await page.getByRole('button').filter({ hasText: /^$/ }).nth(4).click();
+  await page.getByText('haha').waitFor({ timeout: 10000 });
+
   return { step: 'chat_stream_pass' };
 }" >/dev/null
 
