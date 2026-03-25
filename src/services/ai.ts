@@ -34,18 +34,6 @@ export interface RequestOptions {
     signal?: AbortSignal;
 }
 
-function findStreamOverlap(previousText: string, nextText: string): number {
-    const maxOverlap = Math.min(previousText.length, nextText.length);
-
-    for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-        if (previousText.slice(-overlap) === nextText.slice(0, overlap)) {
-            return overlap;
-        }
-    }
-
-    return 0;
-}
-
 function mergeCliProxyStreamText(previousText: string, nextText: string): { fullText: string; delta: string } {
     if (!nextText) {
         return { fullText: previousText, delta: '' };
@@ -70,12 +58,9 @@ function mergeCliProxyStreamText(previousText: string, nextText: string): { full
         return { fullText: previousText, delta: '' };
     }
 
-    const overlapLength = findStreamOverlap(previousText, nextText);
-    const delta = nextText.slice(overlapLength);
-
     return {
-        fullText: previousText + delta,
-        delta
+        fullText: previousText + nextText,
+        delta: nextText
     };
 }
 
