@@ -82,6 +82,21 @@ function extractCliTool(settings: AppSettings): string {
   return 'gemini';
 }
 
+function formatChatHistory(history: ChatMessage[]): string {
+  return history.map((message) => {
+    switch (message.role) {
+      case 'user':
+        return `User: ${message.content}`;
+      case 'assistant':
+        return `Assistant: ${message.content}`;
+      case 'system':
+        return `System: ${message.content}`;
+      default:
+        return `${message.role}: ${message.content}`;
+    }
+  }).join('\n');
+}
+
 export class BackendAiService {
   constructor(private readonly getSettings: () => Promise<AppSettings>) {}
 
@@ -524,7 +539,7 @@ Details: ${idea.details}
   }
 
   async chatStream(prompt: string, history: ChatMessage[], contextIdea: Idea, onChunk: (text: string) => void, options: StreamOptions = {}): Promise<string> {
-    const historyTranscript = history.map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
+    const historyTranscript = formatChatHistory(history);
     return this.generateResponseStream(`
 You are a critical, experienced startup advisor analyzing the idea: "${contextIdea.title}".
 Details: ${contextIdea.details}
@@ -539,7 +554,7 @@ User: ${prompt}
   }
 
   async chat(prompt: string, history: ChatMessage[], contextIdea: Idea, options: RequestOptions = {}): Promise<string> {
-    const historyTranscript = history.map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
+    const historyTranscript = formatChatHistory(history);
     return this.generateResponse(`
 You are a critical, experienced startup advisor analyzing the idea: "${contextIdea.title}".
 Details: ${contextIdea.details}
@@ -568,7 +583,7 @@ User: ${prompt}
   }
 
   async brainstorm(prompt: string, history: ChatMessage[], options: RequestOptions = {}): Promise<string> {
-    const historyTranscript = history.map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
+    const historyTranscript = formatChatHistory(history);
     return this.generateResponse(`
 You are a creative and helpful startup co-founder. You are having a casual brainstorming session with the user.
 
@@ -582,7 +597,7 @@ User: ${prompt}
   }
 
   async summarizeIdeaFromChat(history: ChatMessage[], options: RequestOptions = {}): Promise<GeneratedIdea> {
-    const historyTranscript = history.map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`).join('\n');
+    const historyTranscript = formatChatHistory(history);
     const responseText = await this.generateResponse(`
 Analyze the following brainstorming conversation and extract a concrete startup idea.
 
@@ -605,24 +620,6 @@ Return ONLY the raw JSON object.
       };
     }
     return JSON.parse(responseText.slice(firstBrace, lastBrace + 1)) as GeneratedIdea;
-  }
-
-  async generateImplementationPlan(idea: Idea): Promise<string> {
-    return this.generateResponse(`
-I have a startup idea: "${idea.title}".
-Details: ${idea.details}
-
-The user wants to proceed with this idea. Create a DETAILED, step-by-step implementation plan.
-
-First, provide a "Critical Feasibility Analysis" section where you ruthlessly evaluate the idea's viability and potential pitfalls.
-Then include:
-1. MVP Definition
-2. Technology Stack Recommendations
-3. Go-to-Market Strategy
-4. Monetization Path
-
-Format the response in Markdown.
-`);
   }
 
   private buildViabilityPrompt(idea: Idea): string {
