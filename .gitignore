@@ -1,6 +1,7 @@
 node_modules/
 .DS_Store
 dist/
+dist-server/
 dist-ssr/
 .playwright-cli/
 output/
@@ -8,4 +9,6 @@ output/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-data/
+data/*
+!data/.gitkeep
+!data/db.json

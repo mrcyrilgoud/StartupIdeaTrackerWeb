@@ -18,6 +18,7 @@ export const Home: React.FC = () => {
     const [ideas, setIdeas] = useState<Idea[]>([]);
     const [folders, setFolders] = useState<Folder[]>([]);
     const [selectedFolderId, setSelectedFolderId] = useState<string>('all');
+    const [creatingIdea, setCreatingIdea] = useState(false);
 
     const [error, setError] = useState<string | null>(null);
     const [analyzingMVP, setAnalyzingMVP] = useState(false);
@@ -142,8 +143,17 @@ export const Home: React.FC = () => {
             status: 'draft',
             folder_id: selectedFolderId !== 'all' ? selectedFolderId : undefined
         };
-        // We pass the new object in state so Detail page can load it without DB
-        navigate(`/idea/${newIdea.id}`, { state: { idea: newIdea, isNew: true } });
+
+        setCreatingIdea(true);
+        try {
+            await dbService.saveIdea(newIdea);
+            navigate(`/idea/${newIdea.id}`);
+        } catch (e) {
+            console.error('Failed to create idea:', e);
+            alert('Failed to create idea');
+        } finally {
+            setCreatingIdea(false);
+        }
     };
 
     const handleAnalyzeViability = async (e: React.MouseEvent, idea: Idea) => {
@@ -611,11 +621,12 @@ export const Home: React.FC = () => {
                                 {isVetting ? 'Vetting...' : 'Vet Ideas'}
                             </button>
                             <button
-                                className="text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-accent/5 hover:border-accent hover:text-accent transition-all"
+                                className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-accent/5 hover:border-accent hover:text-accent transition-all ${creatingIdea ? 'cursor-not-allowed opacity-60' : ''}`}
                                 onClick={createNewIdea}
+                                disabled={creatingIdea}
                             >
                                 <Plus size={16} />
-                                New Idea
+                                {creatingIdea ? 'Creating...' : 'New Idea'}
                             </button>
                         </div>
                     </div>
@@ -686,8 +697,8 @@ export const Home: React.FC = () => {
                                     : "Try adjusting your search or filters to find what you're looking for, or check a different folder."}
                             </p>
                             {ideas.length === 0 && (
-                                <button className="btn-primary" onClick={createNewIdea}>
-                                    Create First Idea
+                                <button className="btn-primary" onClick={createNewIdea} disabled={creatingIdea}>
+                                    {creatingIdea ? 'Creating...' : 'Create First Idea'}
                                 </button>
                             )}
                         </div>

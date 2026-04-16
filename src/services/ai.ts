@@ -1,1040 +1,269 @@
-import { AppSettings, Idea, ChatMessage, VettingCriteria, VettingResult } from '../types';
+import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../types';
 
 export interface GeneratedIdea {
-    title: string;
-    details: string;
+  title: string;
+  details: string;
 }
 
 export interface MVPAnalysisResult {
-    ideaId: string;
-    reason: string;
-    score: number;
+  ideaId: string;
+  reason: string;
+  score: number;
 }
 
 export interface Analysis {
-    analysis: string;
-    market?: string;
-    product?: string;
-    acquisition?: string;
-    monetization?: string;
+  analysis: string;
+  market?: string;
+  product?: string;
+  acquisition?: string;
+  monetization?: string;
 }
 
 export interface FolderSuggestion {
-    name: string;
-    description: string;
-    ideaIds: string[];
+  name: string;
+  description: string;
+  ideaIds: string[];
 }
 
 export interface StreamOptions {
-    signal?: AbortSignal;
-    emitDelta?: boolean;
+  signal?: AbortSignal;
+  emitDelta?: boolean;
 }
 
 export interface RequestOptions {
-    signal?: AbortSignal;
+  signal?: AbortSignal;
 }
 
-type CliProxyStreamMode = 'snapshot' | 'delta';
+const API_BASE_URL = '/api';
 
-function getCliProxyStreamMode(payload: Record<string, unknown>): CliProxyStreamMode {
-    if (payload.streamMode === 'delta' || payload.mode === 'delta' || payload.delta === true) {
-        return 'delta';
-    }
+async function request<T>(path: string, body: unknown, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body),
+    ...options
+  });
 
-    return 'snapshot';
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => ({}));
+    throw new Error(String(errorPayload.error || response.statusText));
+  }
+
+  return response.json() as Promise<T>;
 }
 
-function mergeCliProxyStreamText(
-    previousText: string,
-    nextText: string,
-    streamMode: CliProxyStreamMode
-): { fullText: string; delta: string } {
-    if (!nextText) {
-        return { fullText: previousText, delta: '' };
-    }
+async function streamText(
+  path: string,
+  body: unknown,
+  onChunk: (text: string) => void,
+  options: StreamOptions = {}
+): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    signal: options.signal,
+    body: JSON.stringify(body)
+  });
 
-    if (streamMode === 'delta') {
-        return {
-            fullText: previousText + nextText,
-            delta: nextText
-        };
-    }
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => ({}));
+    throw new Error(String(errorPayload.error || response.statusText));
+  }
 
-    if (!previousText) {
-        return { fullText: nextText, delta: nextText };
-    }
+  if (!response.body) {
+    throw new Error('No response body');
+  }
 
-    if (nextText === previousText) {
-        return { fullText: previousText, delta: '' };
-    }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
 
-    if (nextText.startsWith(previousText)) {
-        return {
-            fullText: nextText,
-            delta: nextText.slice(previousText.length)
-        };
-    }
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n');
+    buffer = chunks.pop() || '';
 
-    if (previousText.startsWith(nextText)) {
-        return { fullText: previousText, delta: '' };
+    for (const chunk of chunks) {
+      if (!chunk.startsWith('data: ')) continue;
+      const payloadText = chunk.slice(6).trim();
+      if (!payloadText) continue;
+      const payload = JSON.parse(payloadText) as { delta?: string; fullText?: string; done?: boolean; error?: string };
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      if (payload.delta) {
+        fullText = payload.fullText ?? `${fullText}${payload.delta}`;
+        onChunk(options.emitDelta ? payload.delta : fullText);
+      }
+      if (payload.done) {
+        return payload.fullText ?? fullText;
+      }
     }
+  }
 
-    return {
-        fullText: nextText,
-        delta: nextText
-    };
+  return fullText;
 }
 
 export const aiService = {
-    async generateResponse(
-        prompt: string,
-        settings: AppSettings,
-        thinking: boolean = false,
-        jsonMode: boolean = false,
-        image?: string,
-        options: RequestOptions = {}
-    ): Promise<string> {
-        if (settings.provider === 'gemini') {
-            return this.generateGemini(prompt, settings.geminiKey, thinking, jsonMode, image, options);
-        } else if (settings.provider === 'cli_proxy') {
-            return this.generateCliProxy(prompt, settings, jsonMode, options);
-        } else {
-            return this.generateOllama(prompt, settings, jsonMode, options);
-        }
-    },
-
-    async generateResponseStream(
-        prompt: string,
-        settings: AppSettings,
-        onChunk: (text: string) => void,
-        thinking: boolean = false,
-        image?: string,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        if (settings.provider === 'gemini') {
-            return this.generateGeminiStream(prompt, settings.geminiKey, onChunk, thinking, image, options);
-        } else if (settings.provider === 'cli_proxy') {
-            return this.generateCliProxyStream(prompt, settings, onChunk, options);
-        } else {
-            return this.generateOllamaStream(prompt, settings, onChunk, false, options);
-        }
-    },
-
-    async generateCliProxyStream(
-        prompt: string,
-        settings: AppSettings,
-        onChunk: (text: string) => void,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        let tool = 'gemini'; // default
-        if (settings.cliCommandTemplate) {
-            const firstWord = settings.cliCommandTemplate.split(' ')[0].toLowerCase();
-            if (['gemini', 'opencode', 'codex', 'cursor'].includes(firstWord)) {
-                tool = firstWord;
-            }
-        }
-
-        const response = await fetch('http://localhost:3333/api/low-level-stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: options.signal,
-            body: JSON.stringify({
-                tool: tool,
-                prompt: prompt
-            })
-        });
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || err.details || 'CLI Proxy Stream Error');
-        }
-        if (!response.body) throw new Error('No response body');
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullText = '';
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // keep the last potentially incomplete line in buffer
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const jsonStr = line.substring(6).trim();
-                    if (!jsonStr) continue;
-                    try {
-                        const parsed = JSON.parse(jsonStr);
-                        if (parsed.response) {
-                            const nextChunk = String(parsed.response);
-                            const streamMode = getCliProxyStreamMode(parsed);
-                            const merged = mergeCliProxyStreamText(fullText, nextChunk, streamMode);
-                            fullText = merged.fullText;
-
-                            if (options.emitDelta) {
-                                if (merged.delta) {
-                                    onChunk(merged.delta);
-                                }
-                            } else {
-                                onChunk(fullText);
-                            }
-                        } else if (parsed.error) {
-                            throw new Error(parsed.error);
-                        }
-                    } catch (e) {
-                        // ignore parse error for incomplete chunks
-                    }
-                }
-            }
-        }
-        return fullText;
-    },
-
-    async generateCliProxy(
-        prompt: string,
-        settings: AppSettings,
-        jsonMode: boolean = false,
-        options: RequestOptions = {}
-    ): Promise<string> {
-        // Extract tool from the template if possible, otherwise default to context
-        let tool = 'gemini'; // default
-        if (settings.cliCommandTemplate) {
-            const firstWord = settings.cliCommandTemplate.split(' ')[0].toLowerCase();
-            if (['gemini', 'opencode', 'codex', 'cursor'].includes(firstWord)) {
-                tool = firstWord;
-            }
-        }
-
-        // Add json instruction if needed
-        let finalPrompt = prompt;
-        if (jsonMode) {
-            finalPrompt = `${prompt}\n\nStrictly output valid JSON format only.`;
-        }
-
-        try {
-            const response = await fetch('http://localhost:3333/api/low-level', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                signal: options.signal,
-                body: JSON.stringify({
-                    tool: tool,
-                    prompt: finalPrompt
-                })
-            });
-
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                throw new Error(err.error || err.details || 'CLI Proxy Error');
-            }
-
-            const data = await response.json();
-            return data.response;
-        } catch (e: any) {
-            const message = String(e?.message || '').toLowerCase();
-            if (e?.name === 'AbortError' || message.includes('aborted')) {
-                throw e;
-            }
-            console.error("CLI Proxy Error:", e);
-            throw new Error(`CLI Proxy failed. Is the companion server running at localhost:3333? Details: ${e.message}`);
-        }
-    },
-
-    async generateGeminiStream(
-        prompt: string,
-        apiKey: string,
-        onChunk: (text: string) => void,
-        thinking: boolean = false,
-        image?: string,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        const model = thinking ? 'gemini-2.5-pro' : 'gemini-2.0-flash';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-
-        const parts: any[] = [{ text: prompt }];
-        if (image) parts.push({ inlineData: { mimeType: "image/png", data: image } });
-
-        const body: any = { contents: [{ parts: parts }] };
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: options.signal,
-            body: JSON.stringify(body)
-        });
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error?.message || `Gemini API Error: ${response.status} ${response.statusText}`);
-        }
-        if (!response.body) throw new Error('No response body');
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullText = '';
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // keep the last potentially incomplete line in buffer
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const jsonStr = line.substring(6).trim();
-                    if (!jsonStr) continue;
-                    try {
-                        const parsed = JSON.parse(jsonStr);
-                        const textChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                        if (textChunk) {
-                            fullText += textChunk;
-                            onChunk(options.emitDelta ? textChunk : fullText);
-                        }
-                    } catch (e) {
-                        // ignore parse error for incomplete chunks
-                    }
-                }
-            }
-        }
-        return fullText;
-    },
-
-    async generateGemini(
-        prompt: string,
-        apiKey: string,
-        thinking: boolean = false,
-        jsonMode: boolean = false,
-        image?: string,
-        options: RequestOptions = {}
-    ): Promise<string> {
-        // Use thinking model if requested, otherwise standard verified model
-        const model = thinking ? 'gemini-2.5-pro' : 'gemini-2.0-flash';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        const parts: any[] = [{ text: prompt }];
-
-        if (image) {
-            parts.push({
-                inlineData: {
-                    mimeType: "image/png",
-                    data: image
-                }
-            });
-        }
-
-        const body: any = {
-            contents: [{ parts: parts }]
-        };
-
-        if (jsonMode) {
-            body.generationConfig = { responseMimeType: "application/json" };
-        }
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: options.signal,
-            body: JSON.stringify(body)
-        });
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.error?.message || `Gemini API Error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    },
-
-    async generateOllamaStream(
-        prompt: string,
-        settings: AppSettings,
-        onChunk: (text: string) => void,
-        jsonMode: boolean = false,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        const url = `${settings.ollamaEndpoint}/api/generate`;
-        const body: any = {
-            model: settings.ollamaModel,
-            prompt: prompt,
-            stream: true
-        };
-        if (jsonMode) body.format = "json";
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: options.signal,
-            body: JSON.stringify(body)
-        });
-
-        if (!response.ok) throw new Error('Ollama API Error');
-        if (!response.body) throw new Error('No response body');
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullText = '';
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const parsed = JSON.parse(line);
-                    if (parsed.response) {
-                        fullText += parsed.response;
-                        onChunk(options.emitDelta ? parsed.response : fullText);
-                    }
-                } catch (e) {
-                    // Ignore JSON parse errors on partial chunks
-                }
-            }
-        }
-        return fullText;
-    },
-
-    async generateOllama(
-        prompt: string,
-        settings: AppSettings,
-        jsonMode: boolean = false,
-        options: RequestOptions = {}
-    ): Promise<string> {
-        const url = `${settings.ollamaEndpoint}/api/generate`;
-        const body: any = {
-            model: settings.ollamaModel,
-            prompt: prompt,
-            stream: false
-        };
-
-        if (jsonMode) {
-            body.format = "json";
-        }
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: options.signal,
-            body: JSON.stringify(body)
-        });
-
-        if (!response.ok) throw new Error('Ollama API Error');
-
-        const data = await response.json();
-        return data.response;
-    },
-
-    async generateIdeas(prompt: string, settings: AppSettings, image?: string): Promise<GeneratedIdea[]> {
-        const jsonPrompt = `
-        ${prompt}
-        
-        Strictly output the result as a valid JSON array of objects, where each object has the following keys:
-        - "title": The title of the idea.
-        - "details": A short description of the idea.
-        
-        Do NOT include any markdown formatting or code fences (like \`\`\`json). Return ONLY the raw JSON array.
-        `;
-
-        const responseText = await this.generateResponse(jsonPrompt, settings, false, true, image); // Use fast flash model + jsonMode
-
-        try {
-            // Find the first '[' and last ']' to extract valid JSON array
-            // Even with jsonMode, robustness in parsing is good
-            const firstBracket = responseText.indexOf('[');
-            const lastBracket = responseText.lastIndexOf(']');
-
-            if (firstBracket === -1 || lastBracket === -1 || firstBracket > lastBracket) {
-                // Fallback if strict JSON mode returned just the object without array wrapper (unlikely but possible)
-                throw new Error("No JSON array found in response");
-            }
-
-            const jsonCandidate = responseText.substring(firstBracket, lastBracket + 1);
-            return JSON.parse(jsonCandidate);
-        } catch (e) {
-            console.error("Failed to parse AI response as JSON", responseText);
-            throw new Error("AI response was not valid JSON");
-        }
-    },
-
-    async findSimplestMVP(ideas: Idea[], settings: AppSettings): Promise<MVPAnalysisResult[]> {
-        const ideasContext = ideas.map(idea => `ID: ${idea.id}\nTitle: ${idea.title}\nDetails: ${idea.details}`).join('\n\n');
-
-        const prompt = `
-        Analyze the following startup ideas and score them based on how SIMPLE they would be to build as a Minimum Viable Product (MVP).
-        Consider technical complexity, resource requirements, and time-to-market.
-
-        Ideas:
-        ${ideasContext}
-
-        Strictly output the result as a valid JSON array of objects, with each object having the following keys:
-        - "ideaId": The ID of the idea.
-        - "score": A score from 1 to 10, where 10 means extremely simple to build an MVP for, and 1 means extremely difficult.
-        - "reason": A concise explanation of why it received this score.
-
-        Do NOT include any markdown formatting or code fences. Return ONLY the raw JSON array.
-        `;
-
-        const responseText = await this.generateResponse(prompt, settings, false, true);
-
-        try {
-            const firstBracket = responseText.indexOf('[');
-            const lastBracket = responseText.lastIndexOf(']');
-
-            if (firstBracket === -1 || lastBracket === -1 || firstBracket > lastBracket) {
-                throw new Error("No JSON array found in response");
-            }
-
-            const jsonCandidate = responseText.substring(firstBracket, lastBracket + 1);
-            const parsed = JSON.parse(jsonCandidate);
-
-            if (!Array.isArray(parsed)) {
-                throw new Error("AI response is not an array");
-            }
-
-            return parsed.map((item: any) => ({
-                ideaId: item.ideaId,
-                score: Number(item.score) || 5,
-                reason: item.reason || "No reason provided",
-            }));
-        } catch (e) {
-            console.error("Failed to parse AI response as JSON", responseText);
-            throw new Error("AI response was not valid JSON");
-        }
-    },
-
-    async suggestFolders(ideas: Idea[], currentFolders: any[], settings: AppSettings): Promise<FolderSuggestion[]> {
-        const ideasContext = ideas.map(idea => `ID: ${idea.id}\nTitle: ${idea.title}\nDetails: ${idea.details}`).join('\n\n');
-        const foldersContext = currentFolders.map(f => f.name).join(', ');
-
-        const prompt = `
-        You are a smart organizational assistant. Analyze the following startup ideas and group them into logical folders to help the user stay organized.
-        
-        Current Folders (you can reuse these or create new ones): ${foldersContext}
-
-        Ideas to Organize:
-        ${ideasContext}
-
-        Rules:
-        1. Create broad but specific categories (e.g., "SaaS", "HealthTech", "Consumer Apps").
-        2. Assign every idea to exactly one folder.
-        3. If an idea fits well into an existing folder, use that folder name.
-        4. If an idea is completely unique and doesn't fit with others, you can put it in a "Miscellaneous" folder or create a specific one for it.
-
-        Strictly output the result as a valid JSON array of objects with the following keys:
-        - "name": Name of the folder.
-        - "description": Short description of what belongs in this folder.
-        - "ideaIds": Array of strings containing the IDs of ideas in this folder.
-
-        Do NOT include any markdown formatting or code fences. Return ONLY the raw JSON array.
-        `;
-
-        const responseText = await this.generateResponse(prompt, settings, false, true);
-
-        try {
-            const firstBracket = responseText.indexOf('[');
-            const lastBracket = responseText.lastIndexOf(']');
-
-            if (firstBracket === -1 || lastBracket === -1) {
-                throw new Error("No JSON array found in response");
-            }
-
-            const jsonCandidate = responseText.substring(firstBracket, lastBracket + 1);
-            const parsed = JSON.parse(jsonCandidate);
-
-            if (!Array.isArray(parsed)) {
-                throw new Error("AI response is not an array");
-            }
-
-            // Basic schema validation
-            return parsed.map((item: any) => ({
-                name: item.name || "Unnamed Folder",
-                description: item.description || "",
-                ideaIds: Array.isArray(item.ideaIds) ? item.ideaIds : []
-            }));
-        } catch (e) {
-            console.error("Failed to parse AI response as JSON", responseText);
-            throw new Error("AI response was not valid JSON");
-        }
-    },
-
-    async vetIdeas(ideas: Idea[], criteria: VettingCriteria, settings: AppSettings): Promise<VettingResult[]> {
-        const now = Date.now();
-        const CACHE_DURATION = 8 * 60 * 60 * 1000; // 8 hours
-
-        // 1. Identify valid cached results
-        const cachedResults: VettingResult[] = [];
-        const ideasToProcess: Idea[] = [];
-
-        ideas.forEach(idea => {
-            const cached = idea.vetting?.[criteria];
-            if (cached && (now - cached.timestamp < CACHE_DURATION)) {
-                cachedResults.push(cached);
-            } else {
-                ideasToProcess.push(idea);
-            }
-        });
-
-        // 2. If no new ideas to process, return cached immediately
-        if (ideasToProcess.length === 0) {
-            return cachedResults;
-        }
-
-        // 3. Process only new ideas
-        const ideasContext = ideasToProcess.map(idea => `ID: ${idea.id}\nTitle: ${idea.title}\nDetails: ${idea.details}`).join('\n\n');
-
-        let criteriaPrompt = '';
-
-        switch (criteria) {
-            case 'realism':
-                criteriaPrompt = `
-                Analyze for REALISM and FEASIBILITY.
-                Assign a score from 1 to 10:
-                - 1 = Completely unrealistic, physically impossible, sci-fi (e.g., "Teleportation device").
-                - 10 = Very realistic, easily buildable with current tech.
-                Identify ideas that are UNREALISTIC (Score < 6).
-                `;
-                break;
-            case 'creativity':
-                criteriaPrompt = `
-                Analyze for CREATIVITY and NOVELTY.
-                Assign a score from 1 to 10:
-                - 1 = Boring, cliché, already exists everywhere (e.g., "Another To-Do list").
-                - 10 = Highly innovative, novel, "blue ocean" idea.
-                Identify ideas that are BORING/CLICHÉ (Score < 6).
-                `;
-                break;
-            case 'uniqueness':
-                criteriaPrompt = `
-                Analyze for UNIQUENESS and MARKET SATURATION.
-                Assign a score from 1 to 10:
-                - 1 = Highly saturated, generic, commodity (e.g., "T-shirt dropshipping").
-                - 10 = Unique value proposition, solves a new problem.
-                Identify ideas that are GENERIC (Score < 6).
-                `;
-                break;
-            case 'legality':
-                criteriaPrompt = `
-                Analyze for LEGALITY and ETHICS.
-                Assign a score from 1 to 10:
-                - 1 = Clearly illegal, dangerous, scams, or highly unethical (e.g., "Pyramid scheme", "Weapon manufacturing").
-                - 10 = Completely legal and ethical.
-                Identify ideas that are ILLEGAL/UNETHICAL (Score < 6).
-                `;
-                break;
-        }
-
-        const prompt = `
-        ${criteriaPrompt}
-
-        Ideas:
-        ${ideasContext}
-
-        Strictly output the result as a valid JSON array of objects with the following keys:
-        - "ideaId": The ID of the idea.
-        - "score": Number (1-10).
-        - "reason": A short explanation of why it has this score.
-
-        Return results for ALL these ideas (${ideasToProcess.length}).
-        Do NOT include any markdown formatting or code fences. Return ONLY the raw JSON array.
-        `;
-
-        const responseText = await this.generateResponse(prompt, settings, false, true);
-
-        try {
-            const firstBracket = responseText.indexOf('[');
-            const lastBracket = responseText.lastIndexOf(']');
-
-            if (firstBracket === -1 || lastBracket === -1) {
-                throw new Error("No JSON array found in response");
-            }
-
-            const jsonCandidate = responseText.substring(firstBracket, lastBracket + 1);
-            const parsed = JSON.parse(jsonCandidate);
-
-            if (!Array.isArray(parsed)) {
-                throw new Error("AI response is not an array");
-            }
-
-            const newResults: VettingResult[] = parsed.map((item: any) => ({
-                ideaId: item.ideaId,
-                criteria: criteria,
-                score: Number(item.score || item.realityScore) || 5, // Support legacy realityScore just in case cached/AI hallucination
-                reason: item.reason || "No reason provided",
-                timestamp: Date.now()
-            }));
-
-            // Return merged results
-            return [...cachedResults, ...newResults];
-
-        } catch (e) {
-            console.error("Failed to parse AI response as JSON", responseText);
-            throw new Error("AI response was not valid JSON");
-        }
-    },
-
-    // High-level methods
-    async extractKeywords(idea: Idea, settings: AppSettings, options: RequestOptions = {}): Promise<string[]> {
-        const prompt = `
-      Analyze the following startup idea and extract 5 key conceptually relevant keywords.
-      Return ONLY the keywords separated by commas.
-      
-      Title: ${idea.title}
-      Details: ${idea.details}
-      `;
-
-        const response = await this.generateResponse(prompt, settings, false, false, undefined, options); // Use flash model
-        return response.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
-    },
-
-    async chatStream(
-        prompt: string,
-        history: ChatMessage[],
-        contextIdea: Idea,
-        settings: AppSettings,
-        onChunk: (text: string) => void,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        const historyTranscript = history.map(msg =>
-            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        ).join('\n');
-
-        const fullContext = `
-      You are a critical, experienced startup advisor analyzing the idea: "${contextIdea.title}".
-      Details: ${contextIdea.details}
-
-      Your goal is to help the user refine their idea by identifying risks, challenging assumptions, and offering objective feedback. 
-      Do NOT be sycophantic or blindly agreeable. Be honest about feasibility and potential market challenges.
-      
-      Previous conversation:
-      ${historyTranscript}
-      
-      User: ${prompt}
-      
-      Reply directly to the user's last message, maintaining the context of the startup idea.
-      `;
-
-        return this.generateResponseStream(fullContext, settings, onChunk, false, undefined, options); // Use fast flash model
-    },
-
-    async chat(prompt: string, history: ChatMessage[], contextIdea: Idea, settings: AppSettings): Promise<string> {
-        const historyTranscript = history.map(msg =>
-            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        ).join('\n');
-
-        const fullContext = `
-      You are a critical, experienced startup advisor analyzing the idea: "${contextIdea.title}".
-      Details: ${contextIdea.details}
-
-      Your goal is to help the user refine their idea by identifying risks, challenging assumptions, and offering objective feedback. 
-      Do NOT be sycophantic or blindly agreeable. Be honest about feasibility and potential market challenges.
-      
-      Previous conversation:
-      ${historyTranscript}
-      
-      User: ${prompt}
-      
-      Reply directly to the user's last message, maintaining the context of the startup idea.
-      `;
-
-        return this.generateResponse(fullContext, settings, false); // Use fast flash model
-    },
-
-    async generateViabilityReportStream(
-        idea: Idea,
-        settings: AppSettings,
-        onChunk: (text: string) => void,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        const prompt = `
-You are a seasoned business analyst and market strategist. Your task is to critically examine the business viability of the following startup idea. Be thorough, objective, and brutally honest.
-
-**Idea Title:** ${idea.title}
-**Idea Details:** ${idea.details}
-
-Generate a comprehensive business viability report with the following structure. Use Markdown formatting with headers.
-
-# Business Viability Report: ${idea.title}
-
-## Executive Summary
-Provide a brief 2-3 sentence overview of your assessment.
-
-## Business Model Analysis
-Critically examine:
-- The proposed value proposition and its uniqueness
-- Revenue model feasibility
-- Cost structure assumptions
-- Key risks in the business model
-
-## Current Competitive Landscape
-Analyze:
-- Direct competitors currently operating in this space
-- Indirect competitors and alternative solutions
-- Competitive advantages and disadvantages
-- Market positioning challenges
-
-## Future Competition Threats
-Examine:
-- Potential future entrants (startups, big tech, incumbents)
-- Technology shifts that could disrupt this space
-- Barriers to entry for new competitors
-
-## Market Analysis
-Examine major market features:
-- Total Addressable Market (TAM) estimate
-- Market growth trends
-- Customer segments and their needs
-- Regulatory and legal considerations
-- Geographic considerations
-
-## Improvement Recommendations
-Provide specific, actionable suggestions:
-- How to strengthen the competitive position
-- Features or pivots that could improve market fit
-- Partnership or acquisition opportunities
-
-## Niche Opportunities
-Explore underserved market segments:
-- Niches where major players don't or won't operate
-- Regional opportunities
-- Specialized customer segments
-- Blue ocean strategies
-
-## Final Verdict
-Provide an honest assessment with a viability rating (Low/Medium/High) and your top 3 recommendations for next steps.
-
-Be specific, cite examples of real competitors when possible, and provide actionable insights.
-`;
-        return this.generateResponseStream(prompt, settings, onChunk, true, undefined, options);
-    },
-
-    async generateViabilityReport(idea: Idea, settings: AppSettings): Promise<string> {
-        const prompt = `
-You are a seasoned business analyst and market strategist. Your task is to critically examine the business viability of the following startup idea. Be thorough, objective, and brutally honest.
-
-**Idea Title:** ${idea.title}
-**Idea Details:** ${idea.details}
-
-Generate a comprehensive business viability report with the following structure. Use Markdown formatting with headers.
-
-# Business Viability Report: ${idea.title}
-
-## Executive Summary
-Provide a brief 2-3 sentence overview of your assessment.
-
-## Business Model Analysis
-Critically examine:
-- The proposed value proposition and its uniqueness
-- Revenue model feasibility
-- Cost structure assumptions
-- Key risks in the business model
-
-## Current Competitive Landscape
-Analyze:
-- Direct competitors currently operating in this space
-- Indirect competitors and alternative solutions
-- Competitive advantages and disadvantages
-- Market positioning challenges
-
-## Future Competition Threats
-Examine:
-- Potential future entrants (startups, big tech, incumbents)
-- Technology shifts that could disrupt this space
-- Barriers to entry for new competitors
-
-## Market Analysis
-Examine major market features:
-- Total Addressable Market (TAM) estimate
-- Market growth trends
-- Customer segments and their needs
-- Regulatory and legal considerations
-- Geographic considerations
-
-## Improvement Recommendations
-Provide specific, actionable suggestions:
-- How to strengthen the competitive position
-- Features or pivots that could improve market fit
-- Partnership or acquisition opportunities
-
-## Niche Opportunities
-Explore underserved market segments:
-- Niches where major players don't or won't operate
-- Regional opportunities
-- Specialized customer segments
-- Blue ocean strategies
-
-## Final Verdict
-Provide an honest assessment with a viability rating (Low/Medium/High) and your top 3 recommendations for next steps.
-
-Be specific, cite examples of real competitors when possible, and provide actionable insights.
-`;
-
-        // Use thinking model for deeper analysis
-        return this.generateResponse(prompt, settings, true, false);
-    },
-
-    async analyzeCompetitorsStream(
-        idea: Idea,
-        settings: AppSettings,
-        onChunk: (text: string) => void,
-        options: StreamOptions = {}
-    ): Promise<string> {
-        const prompt = `
-You are a strategic business consultant specializing in competitive intelligence. Your task is to perform a deep-dive competitor analysis for the following startup idea.
-
-**Idea Title:** ${idea.title}
-**Idea Details:** ${idea.details}
-
-Generate a comprehensive Competitor Analysis Report in Markdown format. Be specific, naming real companies where possible, or describing exact categories of existing solutions.
-
-# Competitor Analysis: ${idea.title}
-
-## Market Landscape Overview
-Briefly describe the current state of the market this idea is entering (e.g., "Fragmented," "Winner-take-all," "Emerging," "Saturated").
-
-## Direct Competitors
-Identify 3-5 existing companies or products that solve the exact same problem for the same customer. For each:
-- **Name:** (Real company name if known, or "Generic [Solution Type]")
-- **Strengths:** What they do well.
-- **Weaknesses:** Where they fall short.
-- **Threat Level:** (High/Medium/Low)
-
-## Indirect Competitors
-Identify alternative ways users currently solve this problem (e.g., spreadsheets, manual processes, hiring a human, hacking together other tools).
-
-## SWOT Analysis (Relative to Competitors)
-- **Strengths:** What unique advantages does this idea have?
-- **Weaknesses:** Where is it vulnerable?
-- **Opportunities:** What market gaps are competitors missing?
-- **Threats:** What external factors or competitor moves could kill this idea?
-
-## Differentiation Strategy
-Propose specific "Blue Ocean" moves or features that would make the competition irrelevant. How can this idea distinguish itself immediately?
-
-## Final Strategic Recommendation
-A concluding paragraph on the best path to enter the market.
-`;
-        return this.generateResponseStream(prompt, settings, onChunk, true, undefined, options);
-    },
-
-    async analyzeCompetitors(idea: Idea, settings: AppSettings): Promise<string> {
-        const prompt = `
-You are a strategic business consultant specializing in competitive intelligence. Your task is to perform a deep-dive competitor analysis for the following startup idea.
-
-**Idea Title:** ${idea.title}
-**Idea Details:** ${idea.details}
-
-Generate a comprehensive Competitor Analysis Report in Markdown format. Be specific, naming real companies where possible, or describing exact categories of existing solutions.
-
-# Competitor Analysis: ${idea.title}
-
-## Market Landscape Overview
-Briefly describe the current state of the market this idea is entering (e.g., "Fragmented," "Winner-take-all," "Emerging," "Saturated").
-
-## Direct Competitors
-Identify 3-5 existing companies or products that solve the exact same problem for the same customer. For each:
-- **Name:** (Real company name if known, or "Generic [Solution Type]")
-- **Strengths:** What they do well.
-- **Weaknesses:** Where they fall short.
-- **Threat Level:** (High/Medium/Low)
-
-## Indirect Competitors
-Identify alternative ways users currently solve this problem (e.g., spreadsheets, manual processes, hiring a human, hacking together other tools).
-
-## SWOT Analysis (Relative to Competitors)
-- **Strengths:** What unique advantages does this idea have?
-- **Weaknesses:** Where is it vulnerable?
-- **Opportunities:** What market gaps are competitors missing?
-- **Threats:** What external factors or competitor moves could kill this idea?
-
-## Differentiation Strategy
-Propose specific "Blue Ocean" moves or features that would make the competition irrelevant. How can this idea distinguish itself immediately?
-
-## Final Strategic Recommendation
-A concluding paragraph on the best path to enter the market.
-`;
-
-        // Use thinking model for deeper analysis
-        return this.generateResponse(prompt, settings, true, false);
-    },
-
-    async brainstorm(
-        prompt: string,
-        history: ChatMessage[],
-        settings: AppSettings,
-        options: RequestOptions = {}
-    ): Promise<string> {
-        const historyTranscript = history.map(msg =>
-            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        ).join('\n');
-
-        const fullContext = `
-      You are a creative and helpful startup co-founder. You are having a casual brainstorming session with the user to come up with new startup ideas or refine loose thoughts.
-
-      Goals:
-      1. Encourage creativity.
-      2. Ask probing questions to help define the problem and solution.
-      3. Suggest interesting angles or pivots.
-      4. Be concise and conversational.
-      
-      IMPORTANT: If the user explicitly asks to "save this idea", "create an idea", "capture this", or "I'm done", or indicates they want to store the result, you MUST append the following tag to the end of your response: [ACTION: CREATE_IDEA]
-      
-      Previous conversation:
-      ${historyTranscript}
-      
-      User: ${prompt}
-      
-      Reply directly to the user's last message.
-      `;
-
-        return this.generateResponse(fullContext, settings, false, false, undefined, options);
-    },
-
-    async summarizeIdeaFromChat(
-        history: ChatMessage[],
-        settings: AppSettings,
-        options: RequestOptions = {}
-    ): Promise<GeneratedIdea> {
-        const historyTranscript = history.map(msg =>
-            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-        ).join('\n');
-
-        const prompt = `
-        Analyze the following brainstorming conversation and extract a concrete startup idea.
-        
-        Conversation:
-        ${historyTranscript}
-        
-        Strictly output the result as a valid JSON object with the following keys:
-        - "title": A catchy, concise title for the idea.
-        - "details": A comprehensive description of the idea, capturing the problem, solution, and key features discussed.
-        
-        Do NOT include any markdown formatting or code fences (like \`\`\`json). Return ONLY the raw JSON object.
-        `;
-
-        const responseText = await this.generateResponse(prompt, settings, false, true, undefined, options);
-
-        try {
-            const firstBrace = responseText.indexOf('{');
-            const lastBrace = responseText.lastIndexOf('}');
-
-            if (firstBrace === -1 || lastBrace === -1 || firstBrace > lastBrace) {
-                throw new Error("No JSON object found in response");
-            }
-
-            const jsonCandidate = responseText.substring(firstBrace, lastBrace + 1);
-            return JSON.parse(jsonCandidate);
-        } catch (e) {
-            console.error("Failed to parse AI response as JSON", responseText);
-            // Fallback
-            return {
-                title: "New Idea from Chat",
-                details: "Details could not be automatically generated. Please review the chat history."
-            };
-        }
-    }
+  async generateResponse(
+    prompt: string,
+    _settings: AppSettings,
+    thinking = false,
+    jsonMode = false,
+    _image?: string,
+    options: RequestOptions = {}
+  ): Promise<string> {
+    const response = await request<{ response: string }>('/ai/raw-response', {
+      prompt,
+      thinking,
+      jsonMode
+    }, { signal: options.signal });
+    return response.response;
+  },
+
+  async generateResponseStream(
+    prompt: string,
+    settings: AppSettings,
+    onChunk: (text: string) => void,
+    thinking = false,
+    image?: string,
+    options: StreamOptions = {}
+  ): Promise<string> {
+    const response = await this.generateResponse(prompt, settings, thinking, false, image, options);
+    onChunk(response);
+    return response;
+  },
+
+  async generateIdeas(prompt: string, _settings: AppSettings, image?: string): Promise<GeneratedIdea[]> {
+    const response = await request<{ ideas: GeneratedIdea[] }>('/ai/generate-ideas', {
+      prompt,
+      image
+    });
+    return response.ideas;
+  },
+
+  async findSimplestMVP(ideas: Idea[], _settings: AppSettings): Promise<MVPAnalysisResult[]> {
+    const response = await request<{ results: MVPAnalysisResult[] }>('/ai/find-mvp', {
+      ideaIds: ideas.map((idea) => idea.id)
+    });
+    return response.results;
+  },
+
+  async suggestFolders(ideas: Idea[], _currentFolders: Array<{ name: string }>, _settings: AppSettings): Promise<FolderSuggestion[]> {
+    const response = await request<{ suggestions: FolderSuggestion[] }>('/ai/suggest-folders', {
+      ideaIds: ideas.map((idea) => idea.id)
+    });
+    return response.suggestions;
+  },
+
+  async vetIdeas(ideas: Idea[], criteria: VettingCriteria, _settings: AppSettings): Promise<VettingResult[]> {
+    const response = await request<{ results: VettingResult[] }>('/ai/vet', {
+      criteria,
+      ideaIds: ideas.map((idea) => idea.id)
+    });
+    return response.results;
+  },
+
+  async extractKeywords(idea: Idea, _settings: AppSettings, options: RequestOptions = {}): Promise<string[]> {
+    const response = await request<{ keywords: string[] }>('/ai/extract-keywords', {
+      ideaId: idea.id
+    }, { signal: options.signal });
+    return response.keywords;
+  },
+
+  async chatStream(
+    prompt: string,
+    history: ChatMessage[],
+    contextIdea: Idea,
+    _settings: AppSettings,
+    onChunk: (text: string) => void,
+    options: StreamOptions = {}
+  ): Promise<string> {
+    return streamText('/ai/idea-chat', {
+      ideaId: contextIdea.id,
+      prompt,
+      history,
+      stream: true,
+      persist: false
+    }, onChunk, options);
+  },
+
+  async chat(prompt: string, history: ChatMessage[], contextIdea: Idea, _settings: AppSettings): Promise<string> {
+    const response = await request<{ response: string }>('/ai/idea-chat', {
+      ideaId: contextIdea.id,
+      prompt,
+      history,
+      persist: false
+    });
+    return response.response;
+  },
+
+  async generateViabilityReportStream(
+    idea: Idea,
+    _settings: AppSettings,
+    onChunk: (text: string) => void,
+    options: StreamOptions = {}
+  ): Promise<string> {
+    return streamText('/ai/viability-report', {
+      ideaId: idea.id,
+      stream: true
+    }, onChunk, options);
+  },
+
+  async generateViabilityReport(idea: Idea, _settings: AppSettings): Promise<string> {
+    const response = await request<{ report: string }>('/ai/viability-report', {
+      ideaId: idea.id
+    });
+    return response.report;
+  },
+
+  async analyzeCompetitorsStream(
+    idea: Idea,
+    _settings: AppSettings,
+    onChunk: (text: string) => void,
+    options: StreamOptions = {}
+  ): Promise<string> {
+    return streamText('/ai/competitor-analysis', {
+      ideaId: idea.id,
+      stream: true
+    }, onChunk, options);
+  },
+
+  async analyzeCompetitors(idea: Idea, _settings: AppSettings): Promise<string> {
+    const response = await request<{ report: string }>('/ai/competitor-analysis', {
+      ideaId: idea.id
+    });
+    return response.report;
+  },
+
+  async brainstorm(
+    prompt: string,
+    history: ChatMessage[],
+    _settings: AppSettings,
+    options: RequestOptions = {}
+  ): Promise<string> {
+    const response = await request<{ response: string }>('/ai/brainstorm', {
+      prompt,
+      history
+    }, { signal: options.signal });
+    return response.response;
+  },
+
+  async summarizeIdeaFromChat(
+    history: ChatMessage[],
+    _settings: AppSettings,
+    options: RequestOptions = {}
+  ): Promise<GeneratedIdea> {
+    const response = await request<{ idea: GeneratedIdea }>('/ai/summarize-chat', {
+      history
+    }, { signal: options.signal });
+    return response.idea;
+  }
 };

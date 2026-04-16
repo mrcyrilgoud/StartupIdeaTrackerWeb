@@ -10,23 +10,26 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 APP_PORT="${APP_PORT:-5174}"
-DB_PORT="3001"
-PROXY_PORT="3333"
+BACKEND_PORT="${BACKEND_PORT:-3334}"
+PROXY_PORT="${PROXY_PORT:-3333}"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 export PWCLI="$CODEX_HOME/skills/playwright/scripts/playwright_cli.sh"
-export PLAYWRIGHT_CLI_SESSION="e2e-lag-$(date +%s)"
+export PLAYWRIGHT_CLI_SESSION="lag$(date +%s)"
 
-JSON_SERVER_PID=""
+BACKEND_PID=""
 MOCK_PROXY_PID=""
 VITE_PID=""
+BACKEND_LOG=".context/e2e-backend.log"
+MOCK_PROXY_LOG=".context/e2e-mock-proxy.log"
+VITE_LOG=".context/e2e-vite.log"
 
 cleanup() {
   set +e
 
-  if [[ -n "$JSON_SERVER_PID" ]]; then
-    kill "$JSON_SERVER_PID" >/dev/null 2>&1
-    wait "$JSON_SERVER_PID" >/dev/null 2>&1 || true
+  if [[ -n "$BACKEND_PID" ]]; then
+    kill "$BACKEND_PID" >/dev/null 2>&1
+    wait "$BACKEND_PID" >/dev/null 2>&1 || true
   fi
   if [[ -n "$MOCK_PROXY_PID" ]]; then
     kill "$MOCK_PROXY_PID" >/dev/null 2>&1
@@ -43,11 +46,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
+print_process_log() {
+  local label="$1"
+  local logfile="$2"
+
+  echo "${label} failed. Recent log output:"
+  if [[ -f "$logfile" ]]; then
+    tail -n 80 "$logfile"
+  else
+    echo "Log file not found: $logfile"
+  fi
+}
+
 wait_for_http() {
   local url="$1"
-  local retries="${2:-60}"
+  local pid="${2:-}"
+  local logfile="${3:-}"
+  local retries="${4:-60}"
 
   for _ in $(seq 1 "$retries"); do
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" >/dev/null 2>&1; then
+      print_process_log "Process ${pid}" "$logfile"
+      return 1
+    fi
     if curl -fsS "$url" >/dev/null 2>&1; then
       return 0
     fi
@@ -74,7 +95,7 @@ DBEOF
 cat > .context/mock-ai-proxy.cjs <<'MOCKEOF'
 const http = require('http');
 
-const PORT = 3333;
+const PORT = Number(process.env.PROXY_PORT || '3333');
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -199,17 +220,24 @@ server.listen(PORT, () => {
 });
 MOCKEOF
 
-npx json-server --watch .context/e2e-db.json --port "$DB_PORT" > .context/e2e-json-server.log 2>&1 &
-JSON_SERVER_PID=$!
+rm -f .context/e2e.sqlite
 
-node .context/mock-ai-proxy.cjs > .context/e2e-mock-proxy.log 2>&1 &
+APP_DB_PATH=".context/e2e.sqlite" \
+LEGACY_DB_JSON_PATH=".context/e2e-db.json" \
+SERVER_PORT="$BACKEND_PORT" \
+CLI_PROXY_BASE_URL="http://127.0.0.1:${PROXY_PORT}" \
+npx tsx server/index.ts > "$BACKEND_LOG" 2>&1 &
+BACKEND_PID=$!
+
+PROXY_PORT="$PROXY_PORT" node .context/mock-ai-proxy.cjs > "$MOCK_PROXY_LOG" 2>&1 &
 MOCK_PROXY_PID=$!
 
-npx vite --host 127.0.0.1 --port "$APP_PORT" --strictPort > .context/e2e-vite.log 2>&1 &
+VITE_BACKEND_TARGET="http://127.0.0.1:${BACKEND_PORT}" \
+npx vite --host 127.0.0.1 --port "$APP_PORT" --strictPort > "$VITE_LOG" 2>&1 &
 VITE_PID=$!
 
-wait_for_http "http://localhost:${DB_PORT}/ideas"
-wait_for_http "http://127.0.0.1:${APP_PORT}/"
+wait_for_http "http://127.0.0.1:${BACKEND_PORT}/api/health" "$BACKEND_PID" "$BACKEND_LOG" 60
+wait_for_http "http://127.0.0.1:${APP_PORT}/" "$VITE_PID" "$VITE_LOG" 60
 
 run_pw open "http://127.0.0.1:${APP_PORT}/" >/dev/null
 run_pw run-code "async (page) => {
@@ -231,10 +259,20 @@ run_pw run-code "async (page) => {
   await page.getByPlaceholder('I have an idea for...').press('Enter');
   await page.getByText('Mock AI response generated successfully.').waitFor({ timeout: 10000 });
 
-  let lowLevelCalls = 0;
+  let summarizeCalls = 0;
+  let immediateIdeaChatResponses = 0;
   page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().includes('/api/low-level')) {
-      lowLevelCalls += 1;
+    if (request.method() === 'POST' && request.url().includes('/api/ai/summarize-chat')) {
+      summarizeCalls += 1;
+    }
+  });
+  page.on('response', (response) => {
+    if (
+      response.request().method() === 'POST'
+      && response.url().includes('/api/ai/idea-chat')
+      && response.status() === 200
+    ) {
+      immediateIdeaChatResponses += 1;
     }
   });
 
@@ -243,12 +281,21 @@ run_pw run-code "async (page) => {
   await page.waitForURL(/\\/idea\\/.+/, { timeout: 10000 });
   const elapsedMs = Date.now() - startedAt;
 
-  if (lowLevelCalls !== 1) {
-    throw new Error('Expected exactly 1 /api/low-level request during HomeChat idea creation, received ' + lowLevelCalls);
+  if (summarizeCalls !== 1) {
+    throw new Error('Expected exactly 1 /api/ai/summarize-chat request during HomeChat idea creation, received ' + summarizeCalls);
   }
 
   if (elapsedMs > 6000) {
     throw new Error('HomeChat navigation after create was too slow: ' + elapsedMs + 'ms');
+  }
+
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).waitFor({ timeout: 10000 });
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).fill('Validate immediate persisted idea access.');
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).press('Enter');
+  await page.getByText('This is a streamed mock assistant response to validate throttled rendering.').waitFor({ timeout: 10000 });
+
+  if (immediateIdeaChatResponses < 1) {
+    throw new Error('Expected a successful /api/ai/idea-chat response immediately after HomeChat idea creation.');
   }
 
   await page.goto('http://127.0.0.1:${APP_PORT}/');
@@ -258,6 +305,21 @@ run_pw run-code "async (page) => {
 run_pw run-code "async (page) => {
   await page.goto('http://127.0.0.1:${APP_PORT}/');
   await page.getByRole('button', { name: 'New Idea' }).click();
+  let successfulIdeaChatResponses = 0;
+  page.on('response', (response) => {
+    if (
+      response.request().method() === 'POST'
+      && response.url().includes('/api/ai/idea-chat')
+      && response.status() === 200
+    ) {
+      successfulIdeaChatResponses += 1;
+    }
+  });
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).waitFor({ timeout: 10000 });
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).fill('Confirm new drafts persist before first edit.');
+  await page.getByRole('textbox', { name: 'Ask about your idea...' }).press('Enter');
+  await page.getByText('This is a streamed mock assistant response to validate throttled rendering.').waitFor({ timeout: 10000 });
+
   await page.getByRole('textbox', { name: 'Idea Title' }).fill('Lag Script Idea');
   await page.getByRole('textbox', { name: 'Describe your idea in detail...' }).fill('Scripted E2E validation for lag fixes.');
   await page.waitForTimeout(1200);
@@ -268,6 +330,10 @@ run_pw run-code "async (page) => {
   await page.getByRole('textbox', { name: 'Ask about your idea...' }).fill('Repeat delta fragments exactly.');
   await page.getByRole('button').filter({ hasText: /^$/ }).nth(4).click();
   await page.getByText('haha').waitFor({ timeout: 10000 });
+
+  if (successfulIdeaChatResponses < 3) {
+    throw new Error('Expected at least 3 successful /api/ai/idea-chat responses, received ' + successfulIdeaChatResponses);
+  }
 
   return { step: 'chat_stream_pass' };
 }" >/dev/null
@@ -286,6 +352,81 @@ run_pw run-code "async (page) => {
   }
 
   return { step: 'chat_cancel_pass' };
+}" >/dev/null
+
+run_pw run-code "async (page) => {
+  await page.waitForTimeout(600);
+
+  let ideaSaveRequests = 0;
+  let restoredTitleChatResponses = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/api/ideas')) {
+      ideaSaveRequests += 1;
+    }
+  });
+  page.on('response', (response) => {
+    if (
+      response.request().method() === 'POST'
+      && response.url().includes('/api/ai/idea-chat')
+      && response.status() === 200
+    ) {
+      restoredTitleChatResponses += 1;
+    }
+  });
+
+  const titleInput = page.getByRole('textbox', { name: 'Idea Title' });
+  const validationMessage = page.getByText('Title is required. Changes stay local and AI tools are disabled until you enter one.');
+
+  await titleInput.fill('');
+  await validationMessage.waitFor({ timeout: 5000 });
+  await page.waitForTimeout(1300);
+
+  if (ideaSaveRequests !== 0) {
+    throw new Error('Expected no /api/ideas save requests while the idea title is invalid, received ' + ideaSaveRequests);
+  }
+
+  if (await page.getByRole('textbox', { name: 'Ask about your idea...' }).isEnabled()) {
+    throw new Error('Chat input remained enabled while the title was invalid.');
+  }
+
+  if (await page.getByRole('button', { name: 'Examine Business Viability' }).isEnabled()) {
+    throw new Error('Viability action remained enabled while the title was invalid.');
+  }
+
+  if (await page.getByRole('button', { name: 'Competitor Analysis' }).isEnabled()) {
+    throw new Error('Competitor analysis action remained enabled while the title was invalid.');
+  }
+
+  if (await page.getByRole('button', { name: 'Extract' }).isEnabled()) {
+    throw new Error('Keyword extraction remained enabled while the title was invalid.');
+  }
+
+  await titleInput.fill('Lag Script Idea');
+  await page.waitForTimeout(1300);
+
+  if (ideaSaveRequests < 1) {
+    throw new Error('Expected a /api/ideas save request after restoring a valid title.');
+  }
+
+  const validationStillVisible = await validationMessage.isVisible().catch(() => false);
+  if (validationStillVisible) {
+    throw new Error('Title validation message remained visible after restoring a valid title.');
+  }
+
+  const chatInput = page.getByRole('textbox', { name: 'Ask about your idea...' });
+  if (!(await chatInput.isEnabled())) {
+    throw new Error('Chat input did not re-enable after restoring a valid title.');
+  }
+
+  await chatInput.fill('Validation recovered after restoring title.');
+  await chatInput.press('Enter');
+  await page.getByText('This is a streamed mock assistant response to validate throttled rendering.').waitFor({ timeout: 10000 });
+
+  if (restoredTitleChatResponses < 1) {
+    throw new Error('Expected a successful /api/ai/idea-chat response after restoring a valid title.');
+  }
+
+  return { step: 'title_validation_pass' };
 }" >/dev/null
 
 run_pw run-code "async (page) => {
@@ -378,7 +519,6 @@ if ! grep -q 'Returning 0 messages for level "error"' <<< "$CONSOLE_OUTPUT"; the
 
   UNEXPECTED_ERRORS="$(
     grep '^\[ERROR\]' "$CONSOLE_FILE" \
-      | grep -v 'status of 404 (Not Found) @ http://localhost:3001/ideas/' \
       || true
   )"
 
@@ -387,18 +527,6 @@ if ! grep -q 'Returning 0 messages for level "error"' <<< "$CONSOLE_OUTPUT"; the
     echo "$UNEXPECTED_ERRORS"
     exit 1
   fi
-fi
-
-NETWORK_OUTPUT="$(run_pw network)"
-NETWORK_FILE="$(sed -n 's/.*\[Network\](\(.*\)).*/\1/p' <<< "$NETWORK_OUTPUT")"
-if [[ -z "$NETWORK_FILE" || ! -f "$NETWORK_FILE" ]]; then
-  echo "Could not locate network log artifact from Playwright CLI."
-  exit 1
-fi
-
-if ! grep -q '\[POST\] http://localhost:3333/api/low-level-stream => \[200\] OK' "$NETWORK_FILE"; then
-  echo "Did not find successful streamed AI requests in network log."
-  exit 1
 fi
 
 echo "E2E lag check passed."
