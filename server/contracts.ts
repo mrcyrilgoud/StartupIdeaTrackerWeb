@@ -77,7 +77,10 @@ export const ideaListQuerySchema = z.object({
 export const importDataSchema = z.object({
   version: z.number().optional(),
   timestamp: z.number().optional(),
-  ideas: z.array(ideaSchema).optional(),
+  ideas: z.array(ideaSchema.extend({
+    // Legacy backups may contain draft rows with an empty title.
+    title: z.string()
+  })).optional(),
   folders: z.array(folderSchema).optional(),
   settings: appSettingsSchema.partial().optional()
 });

@@ -1,6 +1,24 @@
 import { APP_SETTINGS_STORAGE_KEY, DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea } from '../types';
 
 const API_BASE_URL = '/api';
+const pendingIdeaSaveChains = new Map<string, Promise<unknown>>();
+
+async function serializeIdeaSave<T>(ideaId: string, saveOperation: () => Promise<T>): Promise<T> {
+  const previousOperation = pendingIdeaSaveChains.get(ideaId) ?? Promise.resolve();
+  const nextOperation = previousOperation
+    .catch(() => undefined)
+    .then(saveOperation);
+
+  pendingIdeaSaveChains.set(ideaId, nextOperation);
+
+  try {
+    return await nextOperation;
+  } finally {
+    if (pendingIdeaSaveChains.get(ideaId) === nextOperation) {
+      pendingIdeaSaveChains.delete(ideaId);
+    }
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -71,30 +89,32 @@ export const dbService = {
   },
 
   async saveIdea(idea: Idea, options?: RequestInit): Promise<string> {
-    const payload: Record<string, unknown> = {
-      id: idea.id,
-      title: idea.title,
-      details: idea.details,
-      analysis: idea.analysis,
-      timestamp: idea.timestamp,
-      keywords: idea.keywords,
-      chatHistory: idea.chatHistory,
-      relatedIdeas: idea.relatedIdeas,
-      status: idea.status,
-      vetting: idea.vetting
-    };
+    return serializeIdeaSave(idea.id, async () => {
+      const payload: Record<string, unknown> = {
+        id: idea.id,
+        title: idea.title,
+        details: idea.details,
+        analysis: idea.analysis,
+        timestamp: idea.timestamp,
+        keywords: idea.keywords,
+        chatHistory: idea.chatHistory,
+        relatedIdeas: idea.relatedIdeas,
+        status: idea.status,
+        vetting: idea.vetting
+      };
 
-    if (idea.folder_id) {
-      payload.folder_id = idea.folder_id;
-    }
+      if (idea.folder_id) {
+        payload.folder_id = idea.folder_id;
+      }
 
-    const saved = await request<Idea>('/ideas', {
-      ...options,
-      method: 'POST',
-      body: JSON.stringify(payload)
+      const saved = await request<Idea>('/ideas', {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      return saved.id;
     });
-
-    return saved.id;
   },
 
   async deleteIdea(id: string): Promise<void> {
