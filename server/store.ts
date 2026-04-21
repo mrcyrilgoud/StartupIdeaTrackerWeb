@@ -596,14 +596,28 @@ export class AppStore {
       return false;
     }
 
-    const payload = JSON.parse(fs.readFileSync(legacyPath, 'utf8')) as {
+    let payload: {
       ideas?: Idea[];
       folders?: Folder[];
     };
+    try {
+      payload = JSON.parse(fs.readFileSync(legacyPath, 'utf8')) as {
+        ideas?: Idea[];
+        folders?: Folder[];
+      };
+    } catch (error) {
+      console.warn(`Skipping legacy JSON migration due to unreadable payload at ${legacyPath}.`, error);
+      return false;
+    }
 
-    await this.importData(payload);
-    this.markLegacyJsonMigrationComplete();
-    return true;
+    try {
+      await this.importData(payload);
+      this.markLegacyJsonMigrationComplete();
+      return true;
+    } catch (error) {
+      console.warn(`Skipping legacy JSON migration due to import failure from ${legacyPath}.`, error);
+      return false;
+    }
   }
 
   async search(query: string, limit = 10): Promise<Array<{ type: 'idea' | 'folder'; id: string; title: string; snippet: string }>> {

@@ -445,6 +445,25 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
   });
 
   app.all('/mcp', async (req, res, next) => {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined
+    });
+    const server = createIdeaMcpServer(store, aiService);
+    const transportWithClose = transport as StreamableHTTPServerTransport & { close?: () => Promise<void> | void };
+    let cleanedUp = false;
+    const cleanup = async () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      await Promise.allSettled([
+        server.close(),
+        Promise.resolve(transportWithClose.close?.())
+      ]);
+    };
+
+    res.on('close', () => {
+      void cleanup();
+    });
+
     try {
       const origin = req.headers.origin;
       if (origin && !allowedOrigins.has(origin)) {
@@ -452,15 +471,12 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         return;
       }
 
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined
-      });
-      const server = createIdeaMcpServer(store, aiService);
       await server.connect(transport);
       await transport.handleRequest(req, res, (req as Request & { body?: unknown }).body);
-      await server.close();
     } catch (error) {
       next(error);
+    } finally {
+      await cleanup();
     }
   });
 

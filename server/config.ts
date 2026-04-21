@@ -13,11 +13,10 @@ export function getAllowedOrigins(): string[] {
     .map((value) => value.trim())
     .filter(Boolean);
 
+  const defaults = [SERVER_BASE_URL];
   if (configured && configured.length > 0) {
-    return configured;
+    return [...new Set([...configured, ...defaults])];
   }
 
-  return [
-    SERVER_BASE_URL
-  ];
+  return defaults;
 }
