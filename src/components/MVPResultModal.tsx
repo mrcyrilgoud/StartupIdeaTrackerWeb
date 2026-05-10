@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom';
 import { Sparkles, ArrowRight, X } from 'lucide-react';
 import { Idea } from '../types';
 import { MVPAnalysisResult } from '../services/ai';
+import { StructuredAiFallback } from './StructuredAiFallback';
 
 interface MVPResultModalProps {
     isOpen: boolean;
     results: MVPAnalysisResult[] | null;
+    rawOutput?: string | null;
     ideas: Idea[];
     onClose: () => void;
 }
@@ -14,15 +16,16 @@ interface MVPResultModalProps {
 export const MVPResultModal: React.FC<MVPResultModalProps> = ({
     isOpen,
     results,
+    rawOutput,
     ideas,
     onClose
 }) => {
-    if (!isOpen || !results) return null;
+    if (!isOpen || (!results && !rawOutput)) return null;
 
     const getIdeaTitle = (id: string) => ideas.find(i => i.id === id)?.title || "Unknown Idea";
 
     // Sort results by score (highest = simplest)
-    const sortedResults = [...results].sort((a, b) => b.score - a.score);
+    const sortedResults = results ? [...results].sort((a, b) => b.score - a.score) : [];
 
     return (
         <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-[1000] backdrop-blur-[4px]">
@@ -45,7 +48,12 @@ export const MVPResultModal: React.FC<MVPResultModalProps> = ({
                 </div>
 
                 <div className="space-y-4 mb-6">
-                    {sortedResults.map((result) => {
+                    {rawOutput ? (
+                        <StructuredAiFallback
+                            title="MVP Ranking Fallback"
+                            rawOutput={rawOutput}
+                        />
+                    ) : sortedResults.map((result) => {
                         // Score 8-10: Green (Easiest), 5-7: Yellow, 1-4: Red (Hardest)
                         let colorClass = "bg-green-500";
                         let textClass = "text-green-500";

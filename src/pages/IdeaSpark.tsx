@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Gamepad2, Brain, ArrowRight, RefreshCw, Sparkles, Timer, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { aiService } from '../services/ai';
+import { aiService, isStructuredParseError } from '../services/ai';
 import { dbService } from '../services/db';
 import { AppSettings, Idea } from '../types';
 import { GeneratedIdeaCard } from '../components/GeneratedIdeaCard';
 import { v4 as uuidv4 } from 'uuid';
+import { StructuredAiFallback } from '../components/StructuredAiFallback';
 
 type GameStage = 'intro' | 'personality' | 'drawing' | 'generating' | 'results';
 
@@ -105,6 +106,7 @@ export const IdeaSpark: React.FC = () => {
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [drawingDescription, setDrawingDescription] = useState('');
     const [generatedIdeas, setGeneratedIdeas] = useState<{ title: string, details: string }[]>([]);
+    const [rawFallbackOutput, setRawFallbackOutput] = useState<string | null>(null);
     const [settings, setSettings] = useState<AppSettings | null>(null);
     const [error, setError] = useState('');
 
@@ -146,6 +148,8 @@ export const IdeaSpark: React.FC = () => {
         setAnswers({});
         setDrawingDescription('');
         setGeneratedIdeas([]);
+        setRawFallbackOutput(null);
+        setError('');
     };
 
     const startDrawingPhase = () => {
@@ -211,6 +215,9 @@ export const IdeaSpark: React.FC = () => {
             return;
         }
 
+        setError('');
+        setGeneratedIdeas([]);
+        setRawFallbackOutput(null);
         setStage('generating');
 
         try {
@@ -249,8 +256,13 @@ export const IdeaSpark: React.FC = () => {
             setStage('results');
         } catch (e) {
             console.error(e);
-            setError('Failed to generate ideas. Check your API key.');
-            setStage('drawing'); // Go back
+            if (isStructuredParseError(e)) {
+                setRawFallbackOutput(e.rawOutput);
+                setStage('results');
+            } else {
+                setError('Failed to generate ideas. Check your API key.');
+                setStage('drawing'); // Go back
+            }
         }
     };
 
@@ -442,6 +454,8 @@ export const IdeaSpark: React.FC = () => {
                         setAnswers({});
                         setDrawingDescription('');
                         setGeneratedIdeas([]);
+                        setRawFallbackOutput(null);
+                        setError('');
                     }}
                     className="mt-4 text-accent hover:underline flex items-center justify-center gap-2 mx-auto"
                 >
@@ -449,11 +463,18 @@ export const IdeaSpark: React.FC = () => {
                 </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {generatedIdeas.map((idea, idx) => (
-                    <GeneratedIdeaCard key={idx} idea={idea} onSave={handleSaveIdea} />
-                ))}
-            </div>
+            {rawFallbackOutput ? (
+                <StructuredAiFallback
+                    title="Idea Spark Fallback"
+                    rawOutput={rawFallbackOutput}
+                />
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {generatedIdeas.map((idea, idx) => (
+                        <GeneratedIdeaCard key={idx} idea={idea} onSave={handleSaveIdea} />
+                    ))}
+                </div>
+            )}
         </motion.div>
     );
 

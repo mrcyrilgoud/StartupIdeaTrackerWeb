@@ -1,11 +1,13 @@
 import React from 'react';
 import { Idea, VettingResult, VettingCriteria } from '../types';
 import { X, Trash2, AlertTriangle, Lightbulb, Fingerprint, Scale, Zap } from 'lucide-react';
+import { StructuredAiFallback } from './StructuredAiFallback';
 
 interface VettingModalProps {
     isOpen: boolean;
     loading: boolean;
     results: VettingResult[];
+    rawOutput?: string | null;
     ideas: Idea[];
     currentCriteria: VettingCriteria | null;
     onClose: () => void;
@@ -13,7 +15,7 @@ interface VettingModalProps {
     onRunVetting: (criteria: VettingCriteria) => void;
 }
 
-export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, results, ideas, currentCriteria, onClose, onDelete, onRunVetting }) => {
+export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, results, rawOutput, ideas, currentCriteria, onClose, onDelete, onRunVetting }) => {
     if (!isOpen) return null;
 
     // Derived state for display
@@ -46,7 +48,7 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
     const getIdeaTitle = (id: string) => ideas.find(i => i.id === id)?.title || "Unknown Idea";
 
     // Setup Phase
-    if (!loading && results.length === 0) {
+    if (!loading && results.length === 0 && !rawOutput) {
         return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
                 <div className="bg-background rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col border border-border">
@@ -140,6 +142,11 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
                             <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
                             <p className="text-text-secondary animate-pulse">Consulting the oracle...</p>
                         </div>
+                    ) : rawOutput ? (
+                        <StructuredAiFallback
+                            title="Vetting Fallback"
+                            rawOutput={rawOutput}
+                        />
                     ) : relevantResults.length === 0 ? (
                         <div className="text-center py-12 text-text-secondary">
                             No results found.

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu, AlertTriangle } from 'lucide-react';
 import { dbService } from '../services/db';
-import { aiService, MVPAnalysisResult } from '../services/ai';
+import { aiService, isStructuredParseError, MVPAnalysisResult } from '../services/ai';
 import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder, VettingResult, VettingCriteria } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { MVPResultModal } from '../components/MVPResultModal';
@@ -23,11 +23,13 @@ export const Home: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [analyzingMVP, setAnalyzingMVP] = useState(false);
     const [mvpResult, setMvpResult] = useState<MVPAnalysisResult[] | null>(null);
+    const [mvpRawOutput, setMvpRawOutput] = useState<string | null>(null);
     const [showMVPModal, setShowMVPModal] = useState(false);
 
     // Vetting state
     const [isVetting, setIsVetting] = useState(false);
     const [vettingResults, setVettingResults] = useState<VettingResult[]>([]);
+    const [vettingRawOutput, setVettingRawOutput] = useState<string | null>(null);
     const [currentCriteria, setCurrentCriteria] = useState<VettingCriteria | null>(null);
     const [showVettingModal, setShowVettingModal] = useState(false);
 
@@ -49,6 +51,7 @@ export const Home: React.FC = () => {
     // Smart Organize state
     const [showSmartOrganizeModal, setShowSmartOrganizeModal] = useState(false);
     const [smartSuggestions, setSmartSuggestions] = useState<any[]>([]);
+    const [smartOrganizeRawOutput, setSmartOrganizeRawOutput] = useState<string | null>(null);
     const [isSmartAnalyzing, setIsSmartAnalyzing] = useState(false);
 
     // Auto-scroll ref
@@ -193,6 +196,8 @@ export const Home: React.FC = () => {
 
         try {
             setAnalyzingMVP(true);
+            setMvpResult(null);
+            setMvpRawOutput(null);
             const settings = await dbService.getSettings();
 
             // Check if key is configured for Gemini (default)
@@ -206,8 +211,13 @@ export const Home: React.FC = () => {
             setMvpResult(result);
             setShowMVPModal(true);
         } catch (e) {
-            console.error(e);
-            alert("Failed to analyze MVP. Please check your AI settings and try again.");
+            if (isStructuredParseError(e)) {
+                setMvpRawOutput(e.rawOutput);
+                setShowMVPModal(true);
+            } else {
+                console.error(e);
+                alert("Failed to analyze MVP. Please check your AI settings and try again.");
+            }
         } finally {
             setAnalyzingMVP(false);
         }
@@ -344,6 +354,7 @@ export const Home: React.FC = () => {
             setShowSmartOrganizeModal(true);
             setIsSmartAnalyzing(true);
             setSmartSuggestions([]);
+            setSmartOrganizeRawOutput(null);
 
             const settings = await dbService.getSettings();
 
@@ -358,9 +369,13 @@ export const Home: React.FC = () => {
             const suggestions = await aiService.suggestFolders(ideas, folders, settings);
             setSmartSuggestions(suggestions);
         } catch (e) {
-            console.error("Smart Organize failed:", e);
-            alert("Failed to generate suggestions. Please check your AI settings.");
-            setShowSmartOrganizeModal(false);
+            if (isStructuredParseError(e)) {
+                setSmartOrganizeRawOutput(e.rawOutput);
+            } else {
+                console.error("Smart Organize failed:", e);
+                alert("Failed to generate suggestions. Please check your AI settings.");
+                setShowSmartOrganizeModal(false);
+            }
         } finally {
             setIsSmartAnalyzing(false);
         }
@@ -433,6 +448,7 @@ export const Home: React.FC = () => {
             return;
         }
         setVettingResults([]);
+        setVettingRawOutput(null);
         setCurrentCriteria(null);
         setShowVettingModal(true);
     };
@@ -442,6 +458,7 @@ export const Home: React.FC = () => {
             setCurrentCriteria(criteria);
             setIsVetting(true);
             setVettingResults([]);
+            setVettingRawOutput(null);
 
             const settings = await dbService.getSettings();
             if (settings.provider === 'gemini' && !settings.geminiKey) {
@@ -485,9 +502,13 @@ export const Home: React.FC = () => {
             }
 
         } catch (e) {
-            console.error("Vetting failed:", e);
-            alert("Failed to vet ideas. Please check your AI settings.");
-            // Don't close modal, let user retry or select other criteria
+            if (isStructuredParseError(e)) {
+                setVettingRawOutput(e.rawOutput);
+            } else {
+                console.error("Vetting failed:", e);
+                alert("Failed to vet ideas. Please check your AI settings.");
+                // Don't close modal, let user retry or select other criteria
+            }
         } finally {
             setIsVetting(false);
         }
@@ -860,8 +881,12 @@ export const Home: React.FC = () => {
                     <MVPResultModal
                         isOpen={showMVPModal}
                         results={mvpResult}
+                        rawOutput={mvpRawOutput}
                         ideas={ideas}
-                        onClose={() => setShowMVPModal(false)}
+                        onClose={() => {
+                            setShowMVPModal(false);
+                            setMvpRawOutput(null);
+                        }}
                     />
 
                     <BusinessViabilityModal
@@ -885,8 +910,12 @@ export const Home: React.FC = () => {
                         isOpen={showSmartOrganizeModal}
                         loading={isSmartAnalyzing}
                         suggestions={smartSuggestions}
+                        rawOutput={smartOrganizeRawOutput}
                         ideas={ideas}
-                        onClose={() => setShowSmartOrganizeModal(false)}
+                        onClose={() => {
+                            setShowSmartOrganizeModal(false);
+                            setSmartOrganizeRawOutput(null);
+                        }}
                         onApply={handleApplySmartOrganize}
                     />
 
@@ -894,9 +923,13 @@ export const Home: React.FC = () => {
                         isOpen={showVettingModal}
                         loading={isVetting}
                         results={vettingResults}
+                        rawOutput={vettingRawOutput}
                         ideas={ideas}
                         currentCriteria={currentCriteria}
-                        onClose={() => setShowVettingModal(false)}
+                        onClose={() => {
+                            setShowVettingModal(false);
+                            setVettingRawOutput(null);
+                        }}
                         onDelete={handleDeleteVettedIdea}
                         onRunVetting={handleRunVetting}
                     />

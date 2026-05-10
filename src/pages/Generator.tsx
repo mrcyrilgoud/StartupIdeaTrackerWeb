@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Layers } from 'lucide-react';
 import { dbService } from '../services/db';
-import { aiService } from '../services/ai';
+import { aiService, isStructuredParseError } from '../services/ai';
 import { Idea, AppSettings } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { GeneratedIdeaCard } from '../components/GeneratedIdeaCard';
+import { StructuredAiFallback } from '../components/StructuredAiFallback';
 
 export const Generator: React.FC = () => {
     const [mode, setMode] = useState<'standard' | 'combination'>('standard');
@@ -12,6 +13,7 @@ export const Generator: React.FC = () => {
     const [userPrompt, setUserPrompt] = useState('');
     const [generatedIdeas, setGeneratedIdeas] = useState<{ title: string, details: string }[]>([]);
     const [error, setError] = useState<string>('');
+    const [rawFallbackOutput, setRawFallbackOutput] = useState<string | null>(null);
     const [ideas, setIdeas] = useState<Idea[]>([]);
     const [settings, setSettings] = useState<AppSettings | null>(null);
 
@@ -36,6 +38,7 @@ export const Generator: React.FC = () => {
         setLoading(true);
         setError('');
         setGeneratedIdeas([]);
+        setRawFallbackOutput(null);
 
         try {
             let prompt = "";
@@ -64,7 +67,11 @@ export const Generator: React.FC = () => {
 
             setGeneratedIdeas(newIdeas);
         } catch (error) {
-            setError(`Error: ${(error as Error).message}`);
+            if (isStructuredParseError(error)) {
+                setRawFallbackOutput(error.rawOutput);
+            } else {
+                setError(`Error: ${(error as Error).message}`);
+            }
         } finally {
             setLoading(false);
         }
@@ -141,6 +148,15 @@ export const Generator: React.FC = () => {
             {error && (
                 <div className="p-4 bg-[#FF3B3020] text-[#FF3B30] rounded-lg mb-4">
                     {error}
+                </div>
+            )}
+
+            {rawFallbackOutput && (
+                <div className="mb-6">
+                    <StructuredAiFallback
+                        title="Idea Generation Fallback"
+                        rawOutput={rawFallbackOutput}
+                    />
                 </div>
             )}
 

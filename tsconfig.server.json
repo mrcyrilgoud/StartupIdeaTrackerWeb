@@ -13,5 +13,5 @@
     "types": ["node"],
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["server/**/*.ts", "src/types.ts"]
+  "include": ["server/**/*.ts", "src/types.ts", "shared/**/*.ts"]
 }

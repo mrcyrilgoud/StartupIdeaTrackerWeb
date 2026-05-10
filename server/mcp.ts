@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { saveIdeaSchema, updateIdeaSchema } from './contracts.js';
 import type { BackendAiService } from './ai.js';
+import { summarizeBrainstormToIdeaWithFallback } from './brainstorm.js';
 import type { AppStore } from './store.js';
 import type { ChatMessage, Idea } from '../src/types.js';
 
@@ -150,8 +151,13 @@ export function createIdeaMcpServer(store: AppStore, aiService: BackendAiService
       }))
     })
   }, async ({ history }) => {
-    const idea = await aiService.summarizeIdeaFromChat(history);
-    return toolResult('Generated idea summary from brainstorm.', { idea });
+    const result = await summarizeBrainstormToIdeaWithFallback(aiService, history);
+    return toolResult(
+      result.degraded
+        ? 'Generated fallback idea summary from brainstorm after structured parse failure.'
+        : 'Generated idea summary from brainstorm.',
+      result
+    );
   });
 
   server.registerTool('ideas.chat', {

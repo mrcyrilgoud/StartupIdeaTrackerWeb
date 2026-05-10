@@ -3,8 +3,10 @@ import { Send, Sparkles, Plus, ArrowRight, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatMessage, AppSettings, Idea } from '../../types';
-import { aiService } from '../../services/ai';
+import { aiService, isStructuredParseError } from '../../services/ai';
 import { dbService } from '../../services/db';
+import { StructuredAiFallback } from '../StructuredAiFallback';
+import { buildBrainstormFallbackIdea } from '../../../shared/structuredAiFallback';
 
 export const HomeChat: React.FC = () => {
     const navigate = useNavigate();
@@ -13,6 +15,7 @@ export const HomeChat: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [creatingIdea, setCreatingIdea] = useState(false);
     const [settings, setSettings] = useState<AppSettings | null>(null);
+    const [summaryFallback, setSummaryFallback] = useState<{ rawOutput: string; history: ChatMessage[] } | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const activeRequestAbortRef = useRef<AbortController | null>(null);
     const isMountedRef = useRef(true);
@@ -59,6 +62,7 @@ export const HomeChat: React.FC = () => {
         const newHistory = [...history, userMsg];
         setHistory(newHistory);
         setInput('');
+        setSummaryFallback(null);
 
         if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
             const errorMsg: ChatMessage = {
@@ -130,6 +134,7 @@ export const HomeChat: React.FC = () => {
 
         if (historyToUse.length === 0 || creatingIdea) return;
         setCreatingIdea(true);
+        setSummaryFallback(null);
         const controller = new AbortController();
         activeRequestAbortRef.current = controller;
 
@@ -156,8 +161,46 @@ export const HomeChat: React.FC = () => {
 
         } catch (error) {
             if (controller.signal.aborted || isAbortError(error)) return;
+            if (isStructuredParseError(error)) {
+                setSummaryFallback({
+                    rawOutput: error.rawOutput,
+                    history: historyToUse
+                });
+                return;
+            }
             console.error("Failed to create idea", error);
             alert("Failed to create idea from chat. Please try again.");
+        } finally {
+            if (activeRequestAbortRef.current === controller) {
+                activeRequestAbortRef.current = null;
+            }
+            if (isMountedRef.current) {
+                setCreatingIdea(false);
+            }
+        }
+    };
+
+    const handleCreateFallbackDraft = async () => {
+        if (!summaryFallback || creatingIdea) return;
+
+        setCreatingIdea(true);
+        const controller = new AbortController();
+        activeRequestAbortRef.current = controller;
+
+        try {
+            const newIdea: Idea = buildBrainstormFallbackIdea(
+                summaryFallback.rawOutput,
+                summaryFallback.history,
+                uuidv4(),
+                Date.now()
+            );
+
+            await dbService.saveIdea(newIdea, { signal: controller.signal });
+            navigate(`/idea/${newIdea.id}`);
+        } catch (error) {
+            if (controller.signal.aborted || isAbortError(error)) return;
+            console.error('Failed to create fallback draft', error);
+            alert('Failed to create draft idea from raw output. Please try again.');
         } finally {
             if (activeRequestAbortRef.current === controller) {
                 activeRequestAbortRef.current = null;
@@ -227,6 +270,32 @@ export const HomeChat: React.FC = () => {
                             </div>
                         )}
                         <div ref={bottomRef} />
+                    </div>
+                </div>
+            )}
+
+            {summaryFallback && (
+                <div className="mb-4 rounded-2xl border border-border bg-surface p-4 shadow-lg">
+                    <StructuredAiFallback
+                        title="Chat Summary Fallback"
+                        message="The AI returned plain text instead of the structured title/details object needed to auto-create an idea. You can review the raw output below and save it as a draft."
+                        rawOutput={summaryFallback.rawOutput}
+                    />
+                    <div className="mt-4 flex flex-wrap justify-end gap-3">
+                        <button
+                            onClick={() => setSummaryFallback(null)}
+                            className="btn-text"
+                            disabled={creatingIdea}
+                        >
+                            Dismiss
+                        </button>
+                        <button
+                            onClick={handleCreateFallbackDraft}
+                            className="btn-primary"
+                            disabled={creatingIdea}
+                        >
+                            {creatingIdea ? 'Creating Draft...' : 'Create Draft from Raw Output'}
+                        </button>
                     </div>
                 </div>
             )}
