@@ -58,15 +58,22 @@ npm run dev
 
 This starts:
 - the backend on `http://127.0.0.1:3334`
+- the companion AI CLI proxy on `http://localhost:3333`
 - the Vite frontend on `http://127.0.0.1:5173`
 - local API and MCP requests are proxied through the frontend origin
+
+If your AI CLI proxy checkout lives somewhere other than `../AI-CLI-Proxy-Server`, point startup at it explicitly:
+
+```bash
+AI_CLI_PROXY_PATH=/path/to/AI-CLI-Proxy-Server npm run dev
+```
 
 ## AI Configuration
 
 Open the Settings page in the app and configure one of:
 - Gemini: set your API key
 - Ollama: point to your local Ollama endpoint and model
-- CLI Proxy: run the companion proxy on `http://localhost:3333`
+- CLI Proxy: `npm run dev` starts the companion proxy on `http://localhost:3333`
 
 ## MCP Usage
 

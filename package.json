@@ -4,9 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev": "concurrently --kill-others-on-fail -n SERVER,PROXY,APP \"npm run dev:server\" \"npm run dev:proxy\" \"npm run dev:frontend\"",
     "dev:frontend": "vite",
     "dev:server": "tsx watch server/index.ts",
+    "dev:proxy": "node scripts/start-ai-proxy.cjs",
     "build": "tsc && tsc -p tsconfig.server.json && vite build",
     "start:server": "node dist-server/server/index.js",
     "mcp:stdio": "tsx server/stdio.ts",
