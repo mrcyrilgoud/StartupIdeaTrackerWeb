@@ -1,5 +1,8 @@
 import { CLI_PROXY_BASE_URL } from './config.js';
 import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../src/types.js';
+import { StructuredParseError } from '../shared/structuredAiError.js';
+
+export { StructuredParseError };
 
 export interface GeneratedIdea {
   title: string;
@@ -28,6 +31,27 @@ export interface RequestOptions {
 }
 
 type CliProxyStreamMode = 'snapshot' | 'delta';
+
+function parseStructuredJson<T>(
+  rawOutput: string,
+  operation: string,
+  shape: 'array' | 'object'
+): T {
+  const opening = shape === 'array' ? '[' : '{';
+  const closing = shape === 'array' ? ']' : '}';
+  const firstIndex = rawOutput.indexOf(opening);
+  const lastIndex = rawOutput.lastIndexOf(closing);
+
+  if (firstIndex === -1 || lastIndex === -1 || firstIndex > lastIndex) {
+    throw new StructuredParseError(operation, rawOutput);
+  }
+
+  try {
+    return JSON.parse(rawOutput.slice(firstIndex, lastIndex + 1)) as T;
+  } catch {
+    throw new StructuredParseError(operation, rawOutput);
+  }
+}
 
 function getCliProxyStreamMode(payload: Record<string, unknown>): CliProxyStreamMode {
   if (payload.streamMode === 'delta' || payload.mode === 'delta' || payload.delta === true) {
@@ -420,13 +444,7 @@ Strictly output the result as a valid JSON array of objects, where each object h
 
 Do NOT include any markdown formatting or code fences. Return ONLY the raw JSON array.
 `, false, true, image);
-
-    const firstBracket = responseText.indexOf('[');
-    const lastBracket = responseText.lastIndexOf(']');
-    if (firstBracket === -1 || lastBracket === -1 || firstBracket > lastBracket) {
-      throw new Error('AI response was not valid JSON');
-    }
-    return JSON.parse(responseText.slice(firstBracket, lastBracket + 1)) as GeneratedIdea[];
+    return parseStructuredJson<GeneratedIdea[]>(responseText, 'generate_ideas', 'array');
   }
 
   async findSimplestMVP(ideas: Idea[]): Promise<MVPAnalysisResult[]> {
@@ -445,13 +463,7 @@ Strictly output the result as a valid JSON array of objects, with each object ha
 
 Return ONLY the raw JSON array.
 `, false, true);
-
-    const firstBracket = responseText.indexOf('[');
-    const lastBracket = responseText.lastIndexOf(']');
-    if (firstBracket === -1 || lastBracket === -1 || firstBracket > lastBracket) {
-      throw new Error('AI response was not valid JSON');
-    }
-    return JSON.parse(responseText.slice(firstBracket, lastBracket + 1)) as MVPAnalysisResult[];
+    return parseStructuredJson<MVPAnalysisResult[]>(responseText, 'find_simplest_mvp', 'array');
   }
 
   async suggestFolders(ideas: Idea[], currentFolders: Array<{ name: string }>): Promise<FolderSuggestion[]> {
@@ -472,13 +484,7 @@ Strictly output a valid JSON array with keys:
 
 Return ONLY the raw JSON array.
 `, false, true);
-
-    const firstBracket = responseText.indexOf('[');
-    const lastBracket = responseText.lastIndexOf(']');
-    if (firstBracket === -1 || lastBracket === -1 || firstBracket > lastBracket) {
-      throw new Error('AI response was not valid JSON');
-    }
-    return JSON.parse(responseText.slice(firstBracket, lastBracket + 1)) as FolderSuggestion[];
+    return parseStructuredJson<FolderSuggestion[]>(responseText, 'suggest_folders', 'array');
   }
 
   async vetIdeas(ideas: Idea[], criteria: VettingCriteria): Promise<VettingResult[]> {
@@ -504,18 +510,11 @@ Strictly output a valid JSON array of objects with keys:
 
 Return ONLY the raw JSON array.
 `, false, true);
-
-    const firstBracket = responseText.indexOf('[');
-    const lastBracket = responseText.lastIndexOf(']');
-    if (firstBracket === -1 || lastBracket === -1 || firstBracket > lastBracket) {
-      throw new Error('AI response was not valid JSON');
-    }
-
-    const parsed = JSON.parse(responseText.slice(firstBracket, lastBracket + 1)) as Array<{
+    const parsed = parseStructuredJson<Array<{
       ideaId: string;
       score: number;
       reason: string;
-    }>;
+    }>>(responseText, 'vet_ideas', 'array');
 
     return parsed.map((result) => ({
       ideaId: result.ideaId,
@@ -610,16 +609,7 @@ Strictly output a valid JSON object with:
 
 Return ONLY the raw JSON object.
 `, false, true, undefined, options);
-
-    const firstBrace = responseText.indexOf('{');
-    const lastBrace = responseText.lastIndexOf('}');
-    if (firstBrace === -1 || lastBrace === -1 || firstBrace > lastBrace) {
-      return {
-        title: 'New Idea from Chat',
-        details: 'Details could not be automatically generated. Please review the chat history.'
-      };
-    }
-    return JSON.parse(responseText.slice(firstBrace, lastBrace + 1)) as GeneratedIdea;
+    return parseStructuredJson<GeneratedIdea>(responseText, 'summarize_chat', 'object');
   }
 
   private buildViabilityPrompt(idea: Idea): string {

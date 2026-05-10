@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { Sparkles, FolderPlus, Check, X } from 'lucide-react';
 import { FolderSuggestion } from '../services/ai';
 import { Idea } from '../types';
+import { StructuredAiFallback } from './StructuredAiFallback';
 
 interface SmartOrganizeModalProps {
     isOpen: boolean;
     suggestions: FolderSuggestion[];
+    rawOutput?: string | null;
     loading: boolean;
     onClose: () => void;
     onApply: (selectedFolders: FolderSuggestion[]) => void;
@@ -15,6 +17,7 @@ interface SmartOrganizeModalProps {
 export const SmartOrganizeModal: React.FC<SmartOrganizeModalProps> = ({
     isOpen,
     suggestions,
+    rawOutput,
     loading,
     onClose,
     onApply,
@@ -75,6 +78,11 @@ export const SmartOrganizeModal: React.FC<SmartOrganizeModalProps> = ({
                                 Finding common themes and logical groupings for your startup concepts.
                             </p>
                         </div>
+                    ) : rawOutput ? (
+                        <StructuredAiFallback
+                            title="Smart Organize Fallback"
+                            rawOutput={rawOutput}
+                        />
                     ) : suggestions.length === 0 ? (
                         <div className="text-center py-12">
                             <p className="text-text-secondary">No suggestions generated. Try adding more details to your ideas.</p>
@@ -140,21 +148,23 @@ export const SmartOrganizeModal: React.FC<SmartOrganizeModalProps> = ({
                     >
                         Cancel
                     </button>
-                    <button
-                        onClick={handleApply}
-                        disabled={loading || selectedIndices.length === 0}
-                        className={`px-6 py-2 rounded-lg flex items-center gap-2 text-sm font-bold text-white shadow-lg shadow-purple-500/20 transition-all ${loading || selectedIndices.length === 0
-                            ? 'bg-text-secondary/50 cursor-not-allowed'
-                            : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:scale-105 active:scale-95'
-                            }`}
-                    >
-                        {loading ? 'Processing...' : (
-                            <>
-                                <Sparkles size={16} />
-                                Apply Organization
-                            </>
-                        )}
-                    </button>
+                    {!rawOutput && (
+                        <button
+                            onClick={handleApply}
+                            disabled={loading || selectedIndices.length === 0}
+                            className={`px-6 py-2 rounded-lg flex items-center gap-2 text-sm font-bold text-white shadow-lg shadow-purple-500/20 transition-all ${loading || selectedIndices.length === 0
+                                ? 'bg-text-secondary/50 cursor-not-allowed'
+                                : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:scale-105 active:scale-95'
+                                }`}
+                        >
+                            {loading ? 'Processing...' : (
+                                <>
+                                    <Sparkles size={16} />
+                                    Apply Organization
+                                </>
+                            )}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

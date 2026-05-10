@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { StructuredParseError, type BackendAiService } from './ai.js';
 import { appSettingsSchema, brainstormSchema, folderSchema, generateIdeasSchema, ideaChatSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, importDataSchema, saveIdeaSchema, suggestFoldersSchema, summarizeChatSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
 import { createIdeaMcpServer } from './mcp.js';
 import { getAllowedOrigins, SERVER_HOST } from './config.js';
 import { NotFoundError } from './errors.js';
-import type { BackendAiService } from './ai.js';
 import type { AppStore } from './store.js';
 import type { ChatMessage, Idea } from '../src/types.js';
 
@@ -488,6 +488,15 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
     }
     if (error instanceof NotFoundError) {
       res.status(404).json({ error: message });
+      return;
+    }
+    if (error instanceof StructuredParseError) {
+      res.status(502).json({
+        error: message,
+        kind: error.kind,
+        operation: error.operation,
+        rawOutput: error.rawOutput
+      });
       return;
     }
     res.status(500).json({ error: message });

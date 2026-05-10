@@ -1,4 +1,16 @@
 import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../types';
+import {
+  StructuredParseError,
+  isStructuredParseError,
+  isStructuredParseErrorPayload
+} from '../../shared/structuredAiError';
+
+export {
+  StructuredParseError,
+  isStructuredParseError,
+  isStructuredParseErrorPayload
+};
+export type { StructuredParseErrorPayload } from '../../shared/structuredAiError';
 
 export interface GeneratedIdea {
   title: string;
@@ -48,6 +60,13 @@ async function request<T>(path: string, body: unknown, options: RequestInit = {}
 
   if (!response.ok) {
     const errorPayload = await response.json().catch(() => ({}));
+    if (isStructuredParseErrorPayload(errorPayload)) {
+      throw new StructuredParseError(
+        errorPayload.operation,
+        errorPayload.rawOutput,
+        errorPayload.error || 'AI response was not valid JSON'
+      );
+    }
     throw new Error(String(errorPayload.error || response.statusText));
   }
 
