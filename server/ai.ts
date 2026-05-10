@@ -1,5 +1,8 @@
 import { CLI_PROXY_BASE_URL } from './config.js';
 import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../src/types.js';
+import { StructuredParseError } from '../shared/structuredAiError.js';
+
+export { StructuredParseError };
 
 export interface GeneratedIdea {
   title: string;
@@ -25,19 +28,6 @@ export interface StreamOptions {
 
 export interface RequestOptions {
   signal?: AbortSignal;
-}
-
-export class StructuredParseError extends Error {
-  readonly kind = 'structured_parse_failed';
-
-  constructor(
-    public readonly operation: string,
-    public readonly rawOutput: string,
-    message = 'AI response was not valid JSON'
-  ) {
-    super(message);
-    this.name = 'StructuredParseError';
-  }
 }
 
 type CliProxyStreamMode = 'snapshot' | 'delta';

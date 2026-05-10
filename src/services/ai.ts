@@ -1,4 +1,16 @@
 import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../types';
+import {
+  StructuredParseError,
+  isStructuredParseError,
+  isStructuredParseErrorPayload
+} from '../../shared/structuredAiError';
+
+export {
+  StructuredParseError,
+  isStructuredParseError,
+  isStructuredParseErrorPayload
+};
+export type { StructuredParseErrorPayload } from '../../shared/structuredAiError';
 
 export interface GeneratedIdea {
   title: string;
@@ -34,45 +46,7 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-interface StructuredParseErrorPayload {
-  error?: string;
-  kind: 'structured_parse_failed';
-  operation: string;
-  rawOutput: string;
-}
-
-export class StructuredParseError extends Error {
-  readonly kind = 'structured_parse_failed';
-
-  constructor(
-    public readonly operation: string,
-    public readonly rawOutput: string,
-    message = 'AI response was not valid JSON'
-  ) {
-    super(message);
-    this.name = 'StructuredParseError';
-  }
-}
-
-export function isStructuredParseError(error: unknown): error is StructuredParseError {
-  return error instanceof StructuredParseError
-    || (typeof error === 'object'
-      && error !== null
-      && 'kind' in error
-      && (error as { kind?: string }).kind === 'structured_parse_failed'
-      && 'rawOutput' in error
-      && 'operation' in error);
-}
-
 const API_BASE_URL = '/api';
-
-function isStructuredParseErrorPayload(payload: unknown): payload is StructuredParseErrorPayload {
-  return typeof payload === 'object'
-    && payload !== null
-    && (payload as { kind?: unknown }).kind === 'structured_parse_failed'
-    && typeof (payload as { rawOutput?: unknown }).rawOutput === 'string'
-    && typeof (payload as { operation?: unknown }).operation === 'string';
-}
 
 async function request<T>(path: string, body: unknown, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
