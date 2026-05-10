@@ -62,3 +62,13 @@ export interface AppSettings {
   ollamaModel: string;
   cliCommandTemplate: string;
 }
+
+export const APP_SETTINGS_STORAGE_KEY = 'app-settings';
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  provider: 'gemini',
+  geminiKey: '',
+  ollamaEndpoint: 'http://localhost:11434',
+  ollamaModel: 'llama3',
+  cliCommandTemplate: 'gemini "{{prompt}}"'
+};

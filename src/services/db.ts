@@ -1,212 +1,169 @@
-import { Idea, AppSettings, Folder } from '../types';
+import { APP_SETTINGS_STORAGE_KEY, DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea } from '../types';
 
-const API_BASE_URL = 'http://localhost:3001';
-const IDEAS_URL = `${API_BASE_URL}/ideas`;
-const FOLDERS_URL = `${API_BASE_URL}/folders`;
-const pendingSaveChains = new Map<string, Promise<string>>();
+const API_BASE_URL = '/api';
+const pendingIdeaSaveChains = new Map<string, Promise<unknown>>();
 
-async function serializeResourceSave(resourceKey: string, saveOperation: () => Promise<string>): Promise<string> {
-    const previousOperation = pendingSaveChains.get(resourceKey) ?? Promise.resolve(resourceKey);
-    const nextOperation = previousOperation
-        .catch(() => resourceKey)
-        .then(saveOperation);
+async function serializeIdeaSave<T>(ideaId: string, saveOperation: () => Promise<T>): Promise<T> {
+  const previousOperation = pendingIdeaSaveChains.get(ideaId) ?? Promise.resolve();
+  const nextOperation = previousOperation
+    .catch(() => undefined)
+    .then(saveOperation);
 
-    pendingSaveChains.set(resourceKey, nextOperation);
+  pendingIdeaSaveChains.set(ideaId, nextOperation);
 
-    try {
-        return await nextOperation;
-    } finally {
-        if (pendingSaveChains.get(resourceKey) === nextOperation) {
-            pendingSaveChains.delete(resourceKey);
-        }
+  try {
+    return await nextOperation;
+  } finally {
+    if (pendingIdeaSaveChains.get(ideaId) === nextOperation) {
+      pendingIdeaSaveChains.delete(ideaId);
     }
+  }
 }
 
-async function upsertJsonServerResource<T extends { id: string }>(
-    baseUrl: string,
-    resource: T,
-    options?: RequestInit
-): Promise<string> {
-    return serializeResourceSave(`${baseUrl}:${resource.id}`, async () => {
-        const requestInit: RequestInit = {
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(resource),
-            ...options
-        };
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    ...init
+  });
 
-        const updateResponse = await fetch(`${baseUrl}/${resource.id}`, {
-            method: 'PUT',
-            ...requestInit
-        });
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Not found');
+    }
+    const errorPayload = await response.json().catch(() => ({}));
+    throw new Error(String(errorPayload.error || response.statusText));
+  }
 
-        if (updateResponse.ok) {
-            return resource.id;
-        }
+  if (response.status === 204) {
+    return undefined as T;
+  }
 
-        if (updateResponse.status !== 404) {
-            throw new Error(`Failed to save resource: ${updateResponse.statusText}`);
-        }
+  return response.json() as Promise<T>;
+}
 
-        const createResponse = await fetch(baseUrl, {
-            method: 'POST',
-            ...requestInit
-        });
+function hasMeaningfulSettings(settings: AppSettings): boolean {
+  return Boolean(
+    settings.geminiKey.trim()
+    || settings.ollamaEndpoint.trim() !== DEFAULT_APP_SETTINGS.ollamaEndpoint
+    || settings.ollamaModel.trim() !== DEFAULT_APP_SETTINGS.ollamaModel
+    || settings.cliCommandTemplate.trim() !== DEFAULT_APP_SETTINGS.cliCommandTemplate
+    || settings.provider !== DEFAULT_APP_SETTINGS.provider
+  );
+}
 
-        if (createResponse.ok) {
-            return resource.id;
-        }
+async function syncLegacySettingsIfNeeded(currentSettings: AppSettings): Promise<AppSettings> {
+  const stored = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+  if (!stored || hasMeaningfulSettings(currentSettings)) {
+    return currentSettings;
+  }
 
-        // Concurrent first-save calls can race: another caller may create the same id
-        // between our 404 PUT and this POST. Retry PUT once to converge on the existing row.
-        const retryUpdateResponse = await fetch(`${baseUrl}/${resource.id}`, {
-            method: 'PUT',
-            ...requestInit
-        });
-
-        if (retryUpdateResponse.ok) {
-            return resource.id;
-        }
-
-        throw new Error(`Failed to create resource: ${createResponse.statusText}`);
+  try {
+    const legacySettings = JSON.parse(stored) as AppSettings;
+    const saved = await request<AppSettings>('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(legacySettings)
     });
+    localStorage.removeItem(APP_SETTINGS_STORAGE_KEY);
+    return saved;
+  } catch {
+    return currentSettings;
+  }
 }
 
 export const dbService = {
-    async getAllIdeas(): Promise<Idea[]> {
-        try {
-            const response = await fetch(IDEAS_URL);
-            if (!response.ok) throw new Error(response.statusText);
-            const ideas: Idea[] = await response.json();
-            return ideas;
-        } catch (error) {
-            console.error('Failed to fetch ideas:', error);
-            throw error; // Propagate error so UI knows db is down
-        }
-    },
+  async getAllIdeas(): Promise<Idea[]> {
+    return request<Idea[]>('/ideas');
+  },
 
-    async getIdea(id: string): Promise<Idea | undefined> {
-        try {
-            const response = await fetch(`${IDEAS_URL}/${id}`);
-            if (!response.ok) {
-                if (response.status === 404) return undefined;
-                throw new Error(`Error fetching idea: ${response.statusText}`);
-            }
-            return await response.json();
-        } catch (error) {
-            console.error(`Failed to fetch idea ${id}:`, error);
-            return undefined;
-        }
-    },
-
-    async saveIdea(idea: Idea, options?: RequestInit): Promise<string> {
-        try {
-            return await upsertJsonServerResource(IDEAS_URL, idea, options);
-        } catch (error) {
-            console.error('Error saving idea:', error);
-            throw error;
-        }
-    },
-
-    async deleteIdea(id: string): Promise<void> {
-        try {
-            const response = await fetch(`${IDEAS_URL}/${id}`, {
-                method: 'DELETE',
-            });
-            if (!response.ok) {
-                throw new Error(`Failed to delete idea: ${response.statusText}`);
-            }
-        } catch (error) {
-            console.error(`Failed to delete idea ${id}:`, error);
-            throw error;
-        }
-    },
-
-    // --- Folders ---
-
-    async getAllFolders(): Promise<Folder[]> {
-        try {
-            const response = await fetch(FOLDERS_URL);
-            if (!response.ok) throw new Error(response.statusText);
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to fetch folders:', error);
-            return [];
-        }
-    },
-
-    async saveFolder(folder: Folder): Promise<string> {
-        try {
-            return await upsertJsonServerResource(FOLDERS_URL, folder);
-        } catch (error) {
-            console.error('Error saving folder:', error);
-            throw error;
-        }
-    },
-
-    async deleteFolder(id: string): Promise<void> {
-        try {
-            const response = await fetch(`${FOLDERS_URL}/${id}`, {
-                method: 'DELETE',
-            });
-            if (!response.ok) throw new Error(`Failed to delete folder: ${response.statusText}`);
-        } catch (error) {
-            console.error(`Failed to delete folder ${id}:`, error);
-            throw error;
-        }
-    },
-
-    async getSettings(): Promise<AppSettings> {
-        const stored = localStorage.getItem('app-settings');
-        if (stored) return JSON.parse(stored);
-
-        return {
-            provider: 'gemini',
-            geminiKey: '',
-            ollamaEndpoint: 'http://localhost:11434',
-            ollamaModel: 'llama3',
-            cliCommandTemplate: 'gemini "{{prompt}}"'
-        };
-    },
-
-    async saveSettings(settings: AppSettings): Promise<void> {
-        localStorage.setItem('app-settings', JSON.stringify(settings));
-    },
-
-    async exportAllData(): Promise<string> {
-        const ideas = await this.getAllIdeas();
-        const folders = await this.getAllFolders();
-        const settings = await this.getSettings();
-        const exportData = {
-            version: 1,
-            timestamp: Date.now(),
-            ideas,
-            folders,
-            settings
-        };
-        return JSON.stringify(exportData, null, 2);
-    },
-
-    async importData(jsonString: string): Promise<void> {
-        try {
-            const data = JSON.parse(jsonString);
-            if (data.ideas && Array.isArray(data.ideas)) {
-                for (const idea of data.ideas) {
-                    await this.saveIdea(idea);
-                }
-            }
-            if (data.folders && Array.isArray(data.folders)) {
-                for (const folder of data.folders) {
-                    await this.saveFolder(folder);
-                }
-            }
-            if (data.settings) {
-                await this.saveSettings(data.settings);
-            }
-        } catch (e) {
-            console.error("Failed to import data", e);
-            throw new Error("Invalid backup file");
-        }
+  async getIdea(id: string): Promise<Idea | undefined> {
+    try {
+      return await request<Idea>(`/ideas/${id}`);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Not found') {
+        return undefined;
+      }
+      throw error;
     }
+  },
+
+  async saveIdea(idea: Idea, options?: RequestInit): Promise<string> {
+    return serializeIdeaSave(idea.id, async () => {
+      const payload: Record<string, unknown> = {
+        id: idea.id,
+        title: idea.title,
+        details: idea.details,
+        analysis: idea.analysis,
+        timestamp: idea.timestamp,
+        keywords: idea.keywords,
+        chatHistory: idea.chatHistory,
+        relatedIdeas: idea.relatedIdeas,
+        status: idea.status,
+        vetting: idea.vetting
+      };
+
+      if (idea.folder_id) {
+        payload.folder_id = idea.folder_id;
+      }
+
+      const saved = await request<Idea>('/ideas', {
+        ...options,
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+
+      return saved.id;
+    });
+  },
+
+  async deleteIdea(id: string): Promise<void> {
+    await request<void>(`/ideas/${id}`, {
+      method: 'DELETE'
+    });
+  },
+
+  async getAllFolders(): Promise<Folder[]> {
+    return request<Folder[]>('/folders');
+  },
+
+  async saveFolder(folder: Folder): Promise<string> {
+    const saved = await request<Folder>('/folders', {
+      method: 'POST',
+      body: JSON.stringify(folder)
+    });
+    return saved.id;
+  },
+
+  async deleteFolder(id: string): Promise<void> {
+    await request<void>(`/folders/${id}`, {
+      method: 'DELETE'
+    });
+  },
+
+  async getSettings(): Promise<AppSettings> {
+    const settings = await request<AppSettings>('/settings');
+    return syncLegacySettingsIfNeeded(settings);
+  },
+
+  async saveSettings(settings: AppSettings): Promise<void> {
+    await request<AppSettings>('/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    });
+    localStorage.removeItem(APP_SETTINGS_STORAGE_KEY);
+  },
+
+  async exportAllData(): Promise<string> {
+    const payload = await request<unknown>('/export');
+    return JSON.stringify(payload, null, 2);
+  },
+
+  async importData(jsonString: string): Promise<void> {
+    const payload = JSON.parse(jsonString);
+    await request('/import', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
 };

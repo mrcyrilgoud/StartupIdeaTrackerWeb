@@ -1,119 +1,111 @@
 # Startup Idea Tracker Codebase Documentation
 
-## 1. Overview
-The **Startup Idea Tracker** is a Progressive Web App (PWA) designed to help users capture, refine, and generate startup ideas. It leverages local-first storage for privacy and offline capability, and integrates with AI models (Google Gemini and Ollama) to provide creative generation and critical analysis of ideas.
+## Overview
+The app is now split into a React frontend and a local TypeScript backend.
 
-## 2. Technology Stack
-- **Frontend Framework**: React 18 with TypeScript.
-- **Build Tool**: Vite 5.
-- **Routing**: `react-router-dom` (v6).
-- **State/Storage**: IndexedDB via the `idb` library (Offline-first architecture).
-- **Styling**: Vanilla CSS with a responsive design system, utilizing `clsx` for class management and `lucide-react` for icons. `framer-motion` is used for animations.
-- **AI Integration**:
-    - **Cloud**: Google Gemini API (`gemini-2.0-flash`, `gemini-2.5-pro`).
-    - **Local**: Ollama (e.g., Llama 3).
+- Frontend: React 18 + Vite + TypeScript
+- Backend: Express + TypeScript on `127.0.0.1:3334`
+- Storage: SQLite via `better-sqlite3`
+- MCP: stdio and Streamable HTTP
+- AI providers: Gemini, Ollama, and CLI proxy
 
-## 3. Project Structure
-The project follows a standard React/Vite structure:
+## Main Runtime Pieces
 
-```
-src/
-├── components/         # Reusable UI components
-│   ├── features/       # Feature-specific components (e.g., Chat)
-│   ├── Layout.tsx      # Main application wrapper
-│   └── ...
-├── pages/              # Top-level route components
-│   ├── Home.tsx        # Dashboard/Idea list
-│   ├── Detail.tsx      # Idea specific view & chat
-│   ├── Generator.tsx   # AI Idea generation interface
-│   └── Settings.tsx    # App configuration
-├── services/           # Business logic and external services
-│   ├── db.ts           # IndexedDB wrapper
-│   └── ai.ts           # AI provider abstraction
-├── types.ts            # TypeScript definitions
-├── App.tsx             # Main router configuration
-└── main.tsx            # Application entry point
-```
+### Frontend
+- `src/pages`: Home, Detail, Generator, Idea Spark, Settings
+- `src/components`: reusable UI and feature components
+- `src/services/db.ts`: relative `/api` client for ideas, folders, settings, export, and import
+- `src/services/ai.ts`: relative `/api` client for AI and streaming endpoints
+- `src/types.ts`: shared domain types and default settings
 
-## 4. Core Data Models (`src/types.ts`)
+### Backend
+- `server/index.ts`: HTTP server entrypoint
+- `server/stdio.ts`: stdio MCP entrypoint
+- `server/app.ts`: Express app and REST endpoints
+- `server/mcp.ts`: MCP tool registration
+- `server/store.ts`: SQLite store, migration, import/export, and query logic
+- `server/ai.ts`: provider orchestration and AI workflow prompts
+- `server/schema.ts`: Drizzle schema definitions
 
-### Idea
-The central entity of the application.
-```typescript
-interface Idea {
-  id: string;             // UUID
-  title: string;
-  details: string;        // Main description
-  analysis?: string;      // AI analysis summary (optional)
-  timestamp: number;      // Creation time
-  keywords: string[];     // AI-extracted tags
-  chatHistory: ChatMessage[]; // Persisted chat context
-  relatedIdeaIds: string[];
-}
-```
+## Persistence Model
+SQLite tables:
+- `ideas`
+- `folders`
+- `idea_keywords`
+- `idea_related`
+- `idea_chat_messages`
+- `idea_vetting_results`
+- `app_settings`
 
-### ChatMessage
-Represents a message in the analysis chat.
-```typescript
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: number;
-}
-```
+The frontend no longer owns persistence directly. It reads and writes through the backend API via same-origin `/api` requests that Vite proxies in local workflows.
 
-### AppSettings
-Stores configuration for AI providers.
-```typescript
-interface AppSettings {
-  provider: 'gemini' | 'ollama';
-  geminiKey: string;
-  ollamaEndpoint: string;
-  ollamaModel: string;
-}
-```
+## API Surface
 
-## 5. Key Services
+### Core Data
+- `GET /api/ideas`
+- `GET /api/ideas/:id`
+- `POST /api/ideas`
+- `PATCH /api/ideas/:id`
+- `DELETE /api/ideas/:id`
+- `GET /api/folders`
+- `POST /api/folders`
+- `DELETE /api/folders/:id`
+- `GET /api/settings`
+- `PUT /api/settings`
+- `GET /api/export`
+- `POST /api/import`
 
-### Database Service (`src/services/db.ts`)
-- Wraps `IndexedDB` using the `idb` library.
-- Manages the `ideas` object store.
-- Provides async methods for `getAllIdeas`, `saveIdea`, `deleteIdea`.
-- **Privacy**: Data is stored locally on the user's device.
-- **Export/Import**: Supports exporting all data to JSON and importing it back (useful for backups).
+### AI
+- `POST /api/ai/generate-ideas`
+- `POST /api/ai/brainstorm`
+- `POST /api/ai/summarize-chat`
+- `POST /api/ai/idea-chat`
+- `POST /api/ai/extract-keywords`
+- `POST /api/ai/viability-report`
+- `POST /api/ai/competitor-analysis`
+- `POST /api/ai/find-mvp`
+- `POST /api/ai/vet`
+- `POST /api/ai/suggest-folders`
+- `POST /api/ai/raw-response`
 
-### AI Service (`src/services/ai.ts`)
-- **Abstraction Layer**: Switches between `gemini` and `ollama` providers based on user settings.
-- **Generative AI Methods**:
-    - `generateIdeas(prompt)`: Forces JSON output to create structured idea cards.
-    - `extractKeywords(idea)`: Analyzes an idea to generate relevant tags.
-    - `chat(prompt, history, idea)`: Maintains a "Critical Advisor" persona.
-- **Models**:
-    - Uses `gemini-2.5-pro` for "thinking" tasks (complex generation) and `gemini-2.0-flash` for faster responses.
+### MCP
+- HTTP: `POST /mcp`
+- stdio: `npm run mcp:stdio`
 
-## 6. Workflows
+Registered MCP tools:
+- `ideas.list`
+- `ideas.search`
+- `ideas.get`
+- `ideas.create`
+- `ideas.update`
+- `folders.list`
+- `folders.create`
+- `brainstorm.chat`
+- `brainstorm.summarize_to_idea`
+- `ideas.chat`
+- `ai.generate_ideas`
+- `ai.extract_keywords`
+- `ai.generate_viability_report`
+- `ai.generate_competitor_analysis`
+- `ai.find_simplest_mvp`
+- `ai.vet_ideas`
+- `ai.suggest_folders`
+- `search`
+- `fetch`
 
-### Idea Capture & Storage
-1.  User clicks "New Idea" on the Home page.
-2.  A new `Idea` object is initialized with a UUID.
-3.  User edits details; data is persisted to IndexedDB via `dbService.saveIdea`.
-4.  Optionally, the user can trigger "Extract Keywords," which calls `aiService` to populate the `keywords` array.
+## Migration Notes
+- If `data/db.json` exists and SQLite is empty, the backend imports the legacy ideas and folders on first start.
+- If browser `localStorage` still contains `app-settings` and backend settings are empty, the frontend syncs them once to the backend and removes the old local copy.
 
-### AI Idea Generation
-1.  Located at `/generate`.
-2.  **Standard Mode**: Generates new ideas from scratch based on a topic.
-3.  **Combination Mode**: Feeds existing user ideas into the prompt to generate hybrid concepts.
-4.  The AI response is parsed from JSON into `GeneratedIdea` objects, which the user can choose to save to their library.
+## Dev Commands
+- `npm run dev`: backend + Vite
+- `npm run preview`: built backend + Vite preview
+- `npm run build`: frontend typecheck, server build, Vite production build
+- `npm run mcp:stdio`: stdio MCP server
+- `npm run e2e:lag`: Playwright lag/regression script against the backend
 
-### Analysis Chat
-1.  Located at `/idea/:id`.
-2.  Loads the specific idea's context and history.
-3.  The system prompt instructs the AI to be a "critical startup advisor," challenging assumptions rather than just validating them.
-4.  Chat history is updated in the `Idea` object and saved to IndexedDB after every turn.
-
-## 7. Setup & Run
-1.  **Install**: `npm install`
-2.  **Dev Server**: `npm run dev`
-3.  **Build**: `npm run build`
-4.  **Configuration**: Go to `/settings` in the app to enter a Gemini API key or configure the local Ollama endpoint.
+## Local Runtime Notes
+- Vite proxies `/api` and `/mcp` to `http://127.0.0.1:3334` by default.
+- `VITE_BACKEND_TARGET` overrides that proxy target for `dev`, `preview`, and local test scripts.
+- Backend `ALLOWED_ORIGINS` defaults to the backend origin itself; direct cross-origin access must opt in explicitly.
+- `POST /api/ai/idea-chat` uses `prompt` as the current user turn and `history` as prior context only. The backend temporarily strips a duplicated trailing user turn for backward compatibility.

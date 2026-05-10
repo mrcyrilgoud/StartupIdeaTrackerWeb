@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { dbService } from '../services/db';
 import { aiService } from '../services/ai';
 import { Idea, AppSettings, ChatMessage, STATUS_LABELS, STATUS_COLORS } from '../types';
@@ -10,11 +10,21 @@ import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
 import { CompetitorAnalysisModal } from '../components/CompetitorAnalysisModal';
 import { ArrowLeft, Sparkles, Trash2, Terminal, Search, Swords } from 'lucide-react';
 
+const TITLE_REQUIRED_MESSAGE = 'Title is required. Changes stay local and AI tools are disabled until you enter one.';
+const CHAT_BLOCKED_MESSAGE = 'Enter a title to save changes and use AI tools.';
+
+function getTitleValidationMessage(title: string): string | null {
+    return title.trim().length > 0 ? null : TITLE_REQUIRED_MESSAGE;
+}
+
+function canPersistIdea(idea: Idea): boolean {
+    return getTitleValidationMessage(idea.title) === null;
+}
+
 export const Detail: React.FC = () => {
     const STREAM_UPDATE_INTERVAL_MS = 100;
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
-    const location = useLocation();
     const [idea, setIdea] = useState<Idea | null>(null);
     const [loading, setLoading] = useState(true);
     const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -41,7 +51,6 @@ export const Detail: React.FC = () => {
     // Ref to track the latest idea state for debounced saving
     const latestIdeaRef = useRef<Idea | null>(null);
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const isNewDraftRef = useRef(false);
 
     // Keep ref in sync
     useEffect(() => {
@@ -110,19 +119,13 @@ export const Detail: React.FC = () => {
         }, STREAM_UPDATE_INTERVAL_MS);
     }, [STREAM_UPDATE_INTERVAL_MS]);
 
-    const clearNewDraftState = useCallback(() => {
-        if (!isNewDraftRef.current) return;
-        isNewDraftRef.current = false;
-        navigate(location.pathname, { replace: true });
-    }, [location.pathname, navigate]);
-
     const persistIdea = useCallback((ideaToSave: Idea, options?: RequestInit) => {
         latestIdeaRef.current = ideaToSave;
-        return dbService.saveIdea(ideaToSave, options).then((savedId) => {
-            clearNewDraftState();
-            return savedId;
-        });
-    }, [clearNewDraftState]);
+        if (!canPersistIdea(ideaToSave)) {
+            return Promise.resolve(ideaToSave.id);
+        }
+        return dbService.saveIdea(ideaToSave, options);
+    }, []);
 
     const handlePersistFailure = useCallback((error: unknown) => {
         if (isAbortError(error)) return;
@@ -152,7 +155,7 @@ export const Detail: React.FC = () => {
             if (saveTimeoutRef.current) {
                 clearTimeout(saveTimeoutRef.current);
                 // Flush any pending save immediately on unmount
-                if (latestIdeaRef.current) {
+                if (latestIdeaRef.current && canPersistIdea(latestIdeaRef.current)) {
                     persistIdeaFireAndForget(latestIdeaRef.current, { keepalive: true });
                 }
             }
@@ -186,6 +189,10 @@ export const Detail: React.FC = () => {
         // Keep this in sync immediately so unmount flushes save the latest edits.
         latestIdeaRef.current = ideaToSave;
 
+        if (!canPersistIdea(ideaToSave)) {
+            return;
+        }
+
         saveTimeoutRef.current = setTimeout(() => {
             if (latestIdeaRef.current) {
                 persistIdeaFireAndForget(latestIdeaRef.current);
@@ -209,34 +216,28 @@ export const Detail: React.FC = () => {
 
     useEffect(() => {
         const init = async () => {
-            // Check if we have state from navigation (new idea draft)
-            const state = location.state as { idea?: Idea, isNew?: boolean } | null;
-            const navigationIdea = state?.idea;
-            const isDraftFromNavigation = state?.isNew && navigationIdea?.id === id;
-            isNewDraftRef.current = Boolean(isDraftFromNavigation);
-
-            if (id) {
-                if (isDraftFromNavigation && navigationIdea) {
-                    // New drafts are created in memory first and may not exist in json-server yet.
-                    setIdea(navigationIdea);
-                } else {
-                    const loaded = await dbService.getIdea(id);
-                    if (loaded) {
-                        setIdea(loaded);
-                    } else if (navigationIdea && navigationIdea.id === id) {
-                        // Fallback for first render before the new draft exists in DB.
-                        setIdea(navigationIdea);
-                    }
-                }
-            } else if (state?.isNew && navigationIdea) {
-                setIdea(navigationIdea);
+            if (!id) {
+                setLoading(false);
+                return;
             }
-            const s = await dbService.getSettings();
-            setSettings(s);
-            setLoading(false);
+
+            try {
+                const [loadedIdea, appSettings] = await Promise.all([
+                    dbService.getIdea(id),
+                    dbService.getSettings()
+                ]);
+
+                setIdea(loadedIdea ?? null);
+                setSettings(appSettings);
+            } catch (error) {
+                console.error('Failed to load idea detail:', error);
+                setIdea(null);
+            } finally {
+                setLoading(false);
+            }
         };
         init();
-    }, [id, location.state]);
+    }, [id]);
 
     // This function now only updates local state and DB for *user text edits*.
     const handleTextChange = (field: keyof Idea, value: string) => {
@@ -271,7 +272,7 @@ export const Detail: React.FC = () => {
     };
 
     const extractKeywords = async () => {
-        if (!idea || !settings) return;
+        if (!idea || !settings || !canPersistIdea(idea)) return;
         setExtracting(true);
         try {
             const keywords = await aiService.extractKeywords(idea, settings);
@@ -313,7 +314,7 @@ export const Detail: React.FC = () => {
 
     const handleStatusChange = (newStatus: any) => {
         setIdea(prev => {
-            if (!prev) return null;
+            if (!prev || !canPersistIdea(prev)) return prev;
             const updated = { ...prev, status: newStatus };
             persistIdeaImmediatelyFireAndForget(updated);
             return updated;
@@ -325,7 +326,7 @@ export const Detail: React.FC = () => {
         if (!keyword) return;
 
         setIdea(prev => {
-            if (!prev) return null;
+            if (!prev || !canPersistIdea(prev)) return prev;
             const existingKeywords = prev.keywords || [];
             if (existingKeywords.includes(keyword)) {
                 return prev;
@@ -339,7 +340,7 @@ export const Detail: React.FC = () => {
 
     const handleRemoveKeyword = (indexToRemove: number) => {
         setIdea(prev => {
-            if (!prev) return null;
+            if (!prev || !canPersistIdea(prev)) return prev;
             const updated = {
                 ...prev,
                 keywords: (prev.keywords || []).filter((_, index) => index !== indexToRemove)
@@ -351,7 +352,7 @@ export const Detail: React.FC = () => {
 
     // Handler for viability analysis
     const handleAnalyzeViability = async () => {
-        if (!idea || !settings) return;
+        if (!idea || !settings || !canPersistIdea(idea)) return;
         let controller: AbortController | null = null;
 
         try {
@@ -403,7 +404,7 @@ export const Detail: React.FC = () => {
 
     // Handler for competitor analysis
     const handleAnalyzeCompetitors = async () => {
-        if (!idea || !settings) return;
+        if (!idea || !settings || !canPersistIdea(idea)) return;
         let controller: AbortController | null = null;
 
         try {
@@ -480,6 +481,9 @@ export const Detail: React.FC = () => {
     if (loading) return <div className="p-5">Loading...</div>;
     if (!idea) return <div className="p-5">Idea not found</div>;
 
+    const titleValidationMessage = getTitleValidationMessage(idea.title);
+    const hasPersistableTitle = titleValidationMessage === null;
+
     return (
         <div className="max-w-[1200px] mx-auto h-full flex flex-col w-full">
             <div className="flex justify-between items-center mb-4">
@@ -494,6 +498,7 @@ export const Detail: React.FC = () => {
                         <select
                             value={idea.status || 'draft'}
                             onChange={(e) => handleStatusChange(e.target.value)}
+                            disabled={!hasPersistableTitle}
                             className="appearance-none pl-3 pr-8 py-1.5 rounded-2xl text-sm font-semibold cursor-pointer outline-none text-center"
                             style={{
                                 backgroundColor: STATUS_COLORS[idea.status || 'draft'] + '20',
@@ -517,7 +522,7 @@ export const Detail: React.FC = () => {
                         onClick={handleAnalyzeViability}
                         className="btn-icon text-accent"
                         title="Examine Business Viability"
-                        disabled={viabilityLoading}
+                        disabled={viabilityLoading || !hasPersistableTitle}
                     >
                         <Search size={20} />
                     </button>
@@ -525,7 +530,7 @@ export const Detail: React.FC = () => {
                         onClick={handleAnalyzeCompetitors}
                         className="btn-icon text-[#ff3b30]"
                         title="Competitor Analysis"
-                        disabled={competitorLoading}
+                        disabled={competitorLoading || !hasPersistableTitle}
                     >
                         <Swords size={20} />
                     </button>
@@ -567,8 +572,13 @@ export const Detail: React.FC = () => {
                         value={idea.title}
                         onChange={e => handleTextChange('title', e.target.value)}
                         placeholder="Idea Title"
-                        className="text-2xl font-bold border-none bg-transparent mb-4 text-text-primary outline-none"
+                        className={`text-2xl font-bold border-none bg-transparent text-text-primary outline-none ${titleValidationMessage ? 'mb-2' : 'mb-4'}`}
                     />
+                    {titleValidationMessage && (
+                        <p className="mt-2 mb-4 text-sm text-danger">
+                            {titleValidationMessage}
+                        </p>
+                    )}
                     <textarea
                         value={idea.details}
                         onChange={e => handleTextChange('details', e.target.value)}
@@ -582,7 +592,7 @@ export const Detail: React.FC = () => {
                             <button
                                 onClick={extractKeywords}
                                 className="btn-text"
-                                disabled={extracting}
+                                disabled={extracting || !hasPersistableTitle}
                             >
                                 <Sparkles size={12} /> {extracting ? 'Extracting...' : 'Extract'}
                             </button>
@@ -591,6 +601,7 @@ export const Detail: React.FC = () => {
                             <input
                                 className="bg-background border border-border rounded-lg px-2 py-1 text-sm flex-1 outline-none focus:border-accent"
                                 placeholder="Add keyword..."
+                                disabled={!hasPersistableTitle}
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
                                         handleAddKeyword((e.target as HTMLInputElement).value);
@@ -606,6 +617,7 @@ export const Detail: React.FC = () => {
                                     <button
                                         className="opacity-0 group-hover:opacity-100 transition-opacity text-text-secondary hover:text-danger"
                                         onClick={() => handleRemoveKeyword(idx)}
+                                        disabled={!hasPersistableTitle}
                                     >
                                         &times;
                                     </button>
@@ -618,7 +630,12 @@ export const Detail: React.FC = () => {
 
                 {/* Right Column: Chat */}
                 <div className="h-full">
-                    <Chat idea={idea} onChatUpdate={handleChatUpdate} onAppendToNote={handleAppendToNote} />
+                    <Chat
+                        idea={idea}
+                        onChatUpdate={handleChatUpdate}
+                        onAppendToNote={handleAppendToNote}
+                        interactionBlockedReason={titleValidationMessage ? CHAT_BLOCKED_MESSAGE : null}
+                    />
                 </div>
             </div>
 

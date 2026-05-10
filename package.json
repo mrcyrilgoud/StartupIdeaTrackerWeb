@@ -4,25 +4,36 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run db\" \"vite\"",
-    "db": "json-server --watch data/db.json --port 3001",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev:frontend": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "build": "tsc && tsc -p tsconfig.server.json && vite build",
+    "start:server": "node dist-server/server/index.js",
+    "mcp:stdio": "tsx server/stdio.ts",
+    "preview": "concurrently \"npm run start:server\" \"npm run preview:frontend\"",
+    "preview:frontend": "vite preview",
     "e2e:lag": "bash scripts/e2e-lag-check.sh"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "better-sqlite3": "^11.8.1",
     "clsx": "^2.1.0",
+    "drizzle-orm": "^0.44.2",
+    "express": "^4.21.2",
     "framer-motion": "^11.0.0",
-    "json-server": "^0.17.4",
     "lucide-react": "^0.300.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.21.0",
     "uuid": "^9.0.0",
-    "vite-plugin-pwa": "^0.17.0"
+    "vite-plugin-pwa": "^0.17.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.0.10",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@types/uuid": "^9.0.7",
@@ -32,6 +43,7 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.16",
     "typescript": "^5.2.2",
+    "tsx": "^4.19.2",
     "vite": "^5.0.8"
   }
 }

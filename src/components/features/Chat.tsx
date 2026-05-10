@@ -46,9 +46,10 @@ interface ChatProps {
     idea: Idea;
     onChatUpdate: (newHistory: ChatMessage[]) => void;
     onAppendToNote: (text: string) => void;
+    interactionBlockedReason?: string | null;
 }
 
-export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }) => {
+export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, interactionBlockedReason }) => {
     const STREAM_UPDATE_INTERVAL_MS = 75;
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -60,6 +61,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     const streamUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeStreamAbortRef = useRef<AbortController | null>(null);
     const isMountedRef = useRef(true);
+    const isInteractionBlocked = Boolean(interactionBlockedReason);
 
     const safeHistory = idea.chatHistory || [];
 
@@ -122,6 +124,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     }, []);
 
     const sendMessage = async () => {
+        if (isInteractionBlocked) return;
         if (!input.trim()) return;
 
         const userMsg: ChatMessage = {
@@ -160,7 +163,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         try {
             const finalOutput = await aiService.chatStream(
                 userMsg.content,
-                historyWithUser,
+                safeHistory,
                 idea,
                 settings,
                 queueStreamChunk,
@@ -204,6 +207,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     };
 
     const handleUndo = () => {
+        if (isInteractionBlocked) return;
         if (safeHistory.length === 0) return;
 
         const lastMsg = safeHistory[safeHistory.length - 1];
@@ -230,7 +234,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     };
 
     const sendQuickPrompt = async (promptText: string) => {
-        if (loading) return;
+        if (loading || isInteractionBlocked) return;
 
         const userMsg: ChatMessage = {
             id: uuidv4(),
@@ -267,7 +271,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         try {
             const finalOutput = await aiService.chatStream(
                 promptText,
-                historyWithUser,
+                safeHistory,
                 idea,
                 settings,
                 queueStreamChunk,
@@ -309,6 +313,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
     };
 
     const generatePlan = async () => {
+        if (isInteractionBlocked) return;
         if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
             const errorMsg: ChatMessage = {
                 id: uuidv4(),
@@ -356,6 +361,11 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleAppendToNoteClick = (text: string) => {
+        if (isInteractionBlocked) return;
+        onAppendToNote(text);
     };
 
     const downloadChatPDF = () => {
@@ -419,13 +429,13 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                         onClick={handleUndo}
                         className="btn-text text-xs px-2 py-1"
                         title="Revert last turn"
-                        disabled={safeHistory.length === 0 || loading}
+                        disabled={safeHistory.length === 0 || loading || isInteractionBlocked}
                     >
                         <Undo size={14} /> Undo
                     </button>
                     <button
                         onClick={generatePlan}
-                        disabled={loading}
+                        disabled={loading || isInteractionBlocked}
                         className="btn-text text-xs px-2 py-1"
                         title="Generate Implementation Plan"
                     >
@@ -456,9 +466,10 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                                 <div className="text-[0.7rem] opacity-70">{msg.role === 'system' ? 'System' : 'AI'}</div>
                                 {msg.role === 'assistant' && (
                                     <button
-                                        onClick={() => onAppendToNote(msg.content)}
+                                        onClick={() => handleAppendToNoteClick(msg.content)}
                                         className="bg-transparent border-none p-0 cursor-pointer text-inherit opacity-60 hover:opacity-100"
                                         title="Save to Note"
+                                        disabled={isInteractionBlocked}
                                     >
                                         <PlusCircle size={14} />
                                     </button>
@@ -487,14 +498,20 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                 <div ref={bottomRef} />
             </div>
 
+            {interactionBlockedReason && (
+                <div className="px-3 py-2 border-t border-border bg-amber-500/10 text-amber-600 text-xs font-medium">
+                    {interactionBlockedReason}
+                </div>
+            )}
+
             <div className="p-2 px-3 border-t border-border flex gap-1.5 flex-wrap">
                 {QUICK_PROMPTS.map(qp => (
                     <button
                         key={qp.label}
                         onClick={() => sendQuickPrompt(qp.prompt)}
-                        disabled={loading}
+                        disabled={loading || isInteractionBlocked}
                         className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-2xl border border-border bg-background text-text-secondary transition-all duration-150
-                            ${loading
+                            ${(loading || isInteractionBlocked)
                                 ? 'cursor-not-allowed opacity-50'
                                 : 'cursor-pointer hover:bg-accent hover:text-white hover:border-accent'
                             }
@@ -511,14 +528,14 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote }
                     className="input"
                     value={input}
                     onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !loading && sendMessage()}
+                    onKeyDown={e => e.key === 'Enter' && !loading && !isInteractionBlocked && sendMessage()}
                     placeholder="Ask about your idea..."
-                    disabled={loading}
+                    disabled={loading || isInteractionBlocked}
                 />
                 <button
                     className="btn-primary flex items-center justify-center px-3"
                     onClick={sendMessage}
-                    disabled={loading || !input.trim()}
+                    disabled={loading || isInteractionBlocked || !input.trim()}
                 >
                     {loading ? '...' : <Send size={18} />}
                 </button>

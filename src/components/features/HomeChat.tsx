@@ -151,8 +151,8 @@ export const HomeChat: React.FC = () => {
                 status: 'draft'
             };
 
-            // 3. Navigate immediately to keep the transition responsive.
-            navigate(`/idea/${newIdea.id}`, { state: { idea: newIdea, isNew: true } });
+            await dbService.saveIdea(newIdea);
+            navigate(`/idea/${newIdea.id}`);
 
         } catch (error) {
             if (controller.signal.aborted || isAbortError(error)) return;
