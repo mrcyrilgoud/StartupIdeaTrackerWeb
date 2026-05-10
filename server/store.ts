@@ -164,10 +164,36 @@ export function initializeSchema(sqlite: SqliteDatabase): void {
 export class AppStore {
   private readonly sqlite: SqliteDatabase;
   private readonly db: ReturnType<typeof drizzle>;
+  private readonly importTransaction: (payload: {
+    ideas?: Idea[];
+    folders?: Folder[];
+    settings?: Partial<AppSettings>;
+  }) => void;
 
   constructor(sqlite: SqliteDatabase) {
     this.sqlite = sqlite;
     this.db = drizzle(sqlite, { schema });
+    this.importTransaction = this.sqlite.transaction((payload: {
+      ideas?: Idea[];
+      folders?: Folder[];
+      settings?: Partial<AppSettings>;
+    }) => {
+      for (const folder of payload.folders ?? []) {
+        this.saveFolderSync(folder);
+      }
+
+      for (const idea of payload.ideas ?? []) {
+        this.saveIdeaSync(idea);
+      }
+
+      if (payload.settings) {
+        const current = this.getSettingsSync();
+        this.saveSettingsSync({
+          ...current,
+          ...payload.settings
+        });
+      }
+    });
   }
 
   private getRowCount(tableName: 'ideas' | 'folders' | 'app_settings'): number {
@@ -189,6 +215,104 @@ export class AppStore {
         value = excluded.value,
         updated_at = excluded.updated_at
     `).run(LEGACY_JSON_MIGRATION_FLAG, 'true', now);
+  }
+
+  private saveIdeaSync(idea: Idea): void {
+    const now = Date.now();
+    const createdAt = idea.timestamp || now;
+
+    this.sqlite.prepare(`
+      INSERT INTO ideas (id, title, details, analysis, status, folder_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        details = excluded.details,
+        analysis = excluded.analysis,
+        status = excluded.status,
+        folder_id = excluded.folder_id,
+        created_at = MIN(ideas.created_at, excluded.created_at),
+        updated_at = excluded.updated_at
+    `).run(
+      idea.id,
+      idea.title,
+      idea.details,
+      idea.analysis ?? null,
+      idea.status,
+      idea.folder_id ?? null,
+      createdAt,
+      now
+    );
+
+    this.overwriteIdeaRelations({
+      ...idea,
+      keywords: uniqueStrings(idea.keywords),
+      relatedIdeas: uniqueStrings(idea.relatedIdeas)
+    });
+  }
+
+  private saveFolderSync(folder: Folder): void {
+    const now = Date.now();
+    this.sqlite.prepare(`
+      INSERT INTO folders (id, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        updated_at = excluded.updated_at
+    `).run(
+      folder.id,
+      folder.name,
+      folder.timestamp || now,
+      now
+    );
+  }
+
+  private getSettingsSync(): AppSettings {
+    const existing = this.sqlite.prepare(`
+      SELECT provider, gemini_key, ollama_endpoint, ollama_model, cli_command_template
+      FROM app_settings
+      WHERE id = ?
+    `).get('default') as {
+      provider: AppSettings['provider'];
+      gemini_key: string;
+      ollama_endpoint: string;
+      ollama_model: string;
+      cli_command_template: string;
+    } | undefined;
+
+    if (!existing) {
+      this.saveSettingsSync(DEFAULT_APP_SETTINGS);
+      return DEFAULT_APP_SETTINGS;
+    }
+
+    return {
+      provider: existing.provider,
+      geminiKey: existing.gemini_key,
+      ollamaEndpoint: existing.ollama_endpoint,
+      ollamaModel: existing.ollama_model,
+      cliCommandTemplate: existing.cli_command_template
+    };
+  }
+
+  private saveSettingsSync(settings: AppSettings): void {
+    this.sqlite.prepare(`
+      INSERT INTO app_settings (id, provider, gemini_key, ollama_endpoint, ollama_model, cli_command_template, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        provider = excluded.provider,
+        gemini_key = excluded.gemini_key,
+        ollama_endpoint = excluded.ollama_endpoint,
+        ollama_model = excluded.ollama_model,
+        cli_command_template = excluded.cli_command_template,
+        updated_at = excluded.updated_at
+    `).run(
+      'default',
+      settings.provider,
+      settings.geminiKey,
+      settings.ollamaEndpoint,
+      settings.ollamaModel,
+      settings.cliCommandTemplate,
+      Date.now()
+    );
   }
 
   private hydrateIdeas(baseRows: IdeaRow[]): Idea[] {
@@ -377,41 +501,7 @@ export class AppStore {
   }
 
   async saveIdea(idea: Idea): Promise<Idea> {
-    const now = Date.now();
-    const createdAt = idea.timestamp || now;
-
-    const transaction = this.sqlite.transaction((input: Idea) => {
-      this.sqlite.prepare(`
-        INSERT INTO ideas (id, title, details, analysis, status, folder_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          title = excluded.title,
-          details = excluded.details,
-          analysis = excluded.analysis,
-          status = excluded.status,
-          folder_id = excluded.folder_id,
-          created_at = MIN(ideas.created_at, excluded.created_at),
-          updated_at = excluded.updated_at
-      `).run(
-        input.id,
-        input.title,
-        input.details,
-        input.analysis ?? null,
-        input.status,
-        input.folder_id ?? null,
-        createdAt,
-        now
-      );
-
-      this.overwriteIdeaRelations(input);
-    });
-
-    transaction({
-      ...idea,
-      keywords: uniqueStrings(idea.keywords),
-      relatedIdeas: uniqueStrings(idea.relatedIdeas)
-    });
-
+    this.saveIdeaSync(idea);
     return (await this.getIdea(idea.id)) as Idea;
   }
 
@@ -466,24 +556,11 @@ export class AppStore {
   }
 
   async saveFolder(folder: Folder): Promise<Folder> {
-    const now = Date.now();
-    await this.db.insert(foldersTable).values({
-      id: folder.id,
-      name: folder.name,
-      createdAt: folder.timestamp || now,
-      updatedAt: now
-    }).onConflictDoUpdate({
-      target: foldersTable.id,
-      set: {
-        name: folder.name,
-        updatedAt: now
-      }
-    });
-
+    this.saveFolderSync(folder);
     return {
       id: folder.id,
       name: folder.name,
-      timestamp: folder.timestamp || now
+      timestamp: folder.timestamp || Date.now()
     };
   }
 
@@ -493,49 +570,11 @@ export class AppStore {
   }
 
   async getSettings(): Promise<AppSettings> {
-    const existing = await this.db.select({
-      provider: appSettingsTable.provider,
-      geminiKey: appSettingsTable.geminiKey,
-      ollamaEndpoint: appSettingsTable.ollamaEndpoint,
-      ollamaModel: appSettingsTable.ollamaModel,
-      cliCommandTemplate: appSettingsTable.cliCommandTemplate
-    }).from(appSettingsTable).where(eq(appSettingsTable.id, 'default'));
-
-    if (existing.length === 0) {
-      await this.saveSettings(DEFAULT_APP_SETTINGS);
-      return DEFAULT_APP_SETTINGS;
-    }
-
-    return {
-      provider: existing[0].provider as AppSettings['provider'],
-      geminiKey: existing[0].geminiKey,
-      ollamaEndpoint: existing[0].ollamaEndpoint,
-      ollamaModel: existing[0].ollamaModel,
-      cliCommandTemplate: existing[0].cliCommandTemplate
-    };
+    return this.getSettingsSync();
   }
 
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
-    await this.db.insert(appSettingsTable).values({
-      id: 'default',
-      provider: settings.provider,
-      geminiKey: settings.geminiKey,
-      ollamaEndpoint: settings.ollamaEndpoint,
-      ollamaModel: settings.ollamaModel,
-      cliCommandTemplate: settings.cliCommandTemplate,
-      updatedAt: Date.now()
-    }).onConflictDoUpdate({
-      target: appSettingsTable.id,
-      set: {
-        provider: settings.provider,
-        geminiKey: settings.geminiKey,
-        ollamaEndpoint: settings.ollamaEndpoint,
-        ollamaModel: settings.ollamaModel,
-        cliCommandTemplate: settings.cliCommandTemplate,
-        updatedAt: Date.now()
-      }
-    });
-
+    this.saveSettingsSync(settings);
     return settings;
   }
 
@@ -560,21 +599,7 @@ export class AppStore {
     folders?: Folder[];
     settings?: Partial<AppSettings>;
   }): Promise<void> {
-    for (const folder of payload.folders ?? []) {
-      await this.saveFolder(folder);
-    }
-
-    for (const idea of payload.ideas ?? []) {
-      await this.saveIdea(idea);
-    }
-
-    if (payload.settings) {
-      const current = await this.getSettings();
-      await this.saveSettings({
-        ...current,
-        ...payload.settings
-      });
-    }
+    this.importTransaction(payload);
   }
 
   async maybeMigrateLegacyJson(legacyPath: string): Promise<boolean> {

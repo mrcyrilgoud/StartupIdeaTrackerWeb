@@ -13,7 +13,10 @@ export function getAllowedOrigins(): string[] {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  const defaults = [SERVER_BASE_URL];
+  const defaults = [
+    SERVER_BASE_URL,
+    `http://localhost:${SERVER_PORT}`
+  ];
   if (configured && configured.length > 0) {
     return [...new Set([...configured, ...defaults])];
   }
