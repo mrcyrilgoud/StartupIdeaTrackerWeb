@@ -1,4 +1,4 @@
-import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../types';
+import type { AppSettings, ChatMessage, Idea, StructuredAiFallbackPayload, VettingCriteria, VettingResult } from '../types';
 import {
   StructuredParseError,
   isStructuredParseError,
@@ -46,6 +46,11 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+export interface StreamResult {
+  fullText: string;
+  fallback?: StructuredAiFallbackPayload;
+}
+
 const API_BASE_URL = '/api';
 
 async function request<T>(path: string, body: unknown, options: RequestInit = {}): Promise<T> {
@@ -78,7 +83,7 @@ async function streamText(
   body: unknown,
   onChunk: (text: string) => void,
   options: StreamOptions = {}
-): Promise<string> {
+): Promise<StreamResult> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: 'POST',
     headers: {
@@ -113,7 +118,13 @@ async function streamText(
       if (!chunk.startsWith('data: ')) continue;
       const payloadText = chunk.slice(6).trim();
       if (!payloadText) continue;
-      const payload = JSON.parse(payloadText) as { delta?: string; fullText?: string; done?: boolean; error?: string };
+      const payload = JSON.parse(payloadText) as {
+        delta?: string;
+        fullText?: string;
+        done?: boolean;
+        error?: string;
+        fallback?: StructuredAiFallbackPayload;
+      };
       if (payload.error) {
         throw new Error(payload.error);
       }
@@ -121,13 +132,21 @@ async function streamText(
         fullText = payload.fullText ?? `${fullText}${payload.delta}`;
         onChunk(options.emitDelta ? payload.delta : fullText);
       }
+      if (payload.fallback) {
+        return {
+          fullText: payload.fullText ?? fullText,
+          fallback: payload.fallback
+        };
+      }
       if (payload.done) {
-        return payload.fullText ?? fullText;
+        return {
+          fullText: payload.fullText ?? fullText
+        };
       }
     }
   }
 
-  return fullText;
+  return { fullText };
 }
 
 export const aiService = {
@@ -205,13 +224,14 @@ export const aiService = {
     onChunk: (text: string) => void,
     options: StreamOptions = {}
   ): Promise<string> {
-    return streamText('/ai/idea-chat', {
+    const result = await streamText('/ai/idea-chat', {
       ideaId: contextIdea.id,
       prompt,
       history,
       stream: true,
       persist: false
     }, onChunk, options);
+    return result.fullText;
   },
 
   async chat(prompt: string, history: ChatMessage[], contextIdea: Idea, _settings: AppSettings): Promise<string> {
@@ -230,10 +250,11 @@ export const aiService = {
     onChunk: (text: string) => void,
     options: StreamOptions = {}
   ): Promise<string> {
-    return streamText('/ai/viability-report', {
+    const result = await streamText('/ai/viability-report', {
       ideaId: idea.id,
       stream: true
     }, onChunk, options);
+    return result.fullText;
   },
 
   async generateViabilityReport(idea: Idea, _settings: AppSettings): Promise<string> {
@@ -249,10 +270,11 @@ export const aiService = {
     onChunk: (text: string) => void,
     options: StreamOptions = {}
   ): Promise<string> {
-    return streamText('/ai/competitor-analysis', {
+    const result = await streamText('/ai/competitor-analysis', {
       ideaId: idea.id,
       stream: true
     }, onChunk, options);
+    return result.fullText;
   },
 
   async analyzeCompetitors(idea: Idea, _settings: AppSettings): Promise<string> {
@@ -284,5 +306,14 @@ export const aiService = {
       history
     }, { signal: options.signal });
     return response.idea;
+  },
+
+  async summarizeIdeaHistoryStream(
+    ideaId: string,
+    range: { from: number; to: number },
+    onChunk: (text: string) => void,
+    options: StreamOptions = {}
+  ): Promise<StreamResult> {
+    return streamText(`/ideas/${ideaId}/history/summary`, range, onChunk, options);
   }
 };

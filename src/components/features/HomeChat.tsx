@@ -156,7 +156,15 @@ export const HomeChat: React.FC = () => {
                 status: 'draft'
             };
 
-            await dbService.saveIdea(newIdea);
+            await dbService.saveIdea(newIdea, {
+                eventContext: {
+                    type: 'ai_brainstorm_summarized',
+                    payload: {
+                        degraded: false,
+                        sourceChatTurns: historyToUse.length
+                    }
+                }
+            });
             navigate(`/idea/${newIdea.id}`);
 
         } catch (error) {
@@ -195,7 +203,16 @@ export const HomeChat: React.FC = () => {
                 Date.now()
             );
 
-            await dbService.saveIdea(newIdea, { signal: controller.signal });
+            await dbService.saveIdea(newIdea, {
+                signal: controller.signal,
+                eventContext: {
+                    type: 'ai_brainstorm_summarized',
+                    payload: {
+                        degraded: true,
+                        sourceChatTurns: summaryFallback.history.length
+                    }
+                }
+            });
             navigate(`/idea/${newIdea.id}`);
         } catch (error) {
             if (controller.signal.aborted || isAbortError(error)) return;

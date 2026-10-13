@@ -1,7 +1,14 @@
-import { APP_SETTINGS_STORAGE_KEY, DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea } from '../types';
+import { APP_SETTINGS_STORAGE_KEY, DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventDiff, type IdeaEventType } from '../types';
 
 const API_BASE_URL = '/api';
 const pendingIdeaSaveChains = new Map<string, Promise<unknown>>();
+
+type SaveIdeaOptions = RequestInit & {
+  eventContext?: {
+    type: IdeaEventType;
+    payload?: Record<string, unknown>;
+  };
+};
 
 async function serializeIdeaSave<T>(ideaId: string, saveOperation: () => Promise<T>): Promise<T> {
   const previousOperation = pendingIdeaSaveChains.get(ideaId) ?? Promise.resolve();
@@ -88,7 +95,7 @@ export const dbService = {
     }
   },
 
-  async saveIdea(idea: Idea, options?: RequestInit): Promise<string> {
+  async saveIdea(idea: Idea, options?: SaveIdeaOptions): Promise<string> {
     return serializeIdeaSave(idea.id, async () => {
       const payload: Record<string, unknown> = {
         id: idea.id,
@@ -106,6 +113,9 @@ export const dbService = {
       if (idea.folder_id) {
         payload.folder_id = idea.folder_id;
       }
+      if (options?.eventContext) {
+        payload.eventContext = options.eventContext;
+      }
 
       const saved = await request<Idea>('/ideas', {
         ...options,
@@ -120,6 +130,26 @@ export const dbService = {
   async deleteIdea(id: string): Promise<void> {
     await request<void>(`/ideas/${id}`, {
       method: 'DELETE'
+    });
+  },
+
+  async listIdeaEvents(id: string, options: { limit?: number; before?: number } = {}): Promise<IdeaEvent[]> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) {
+      params.set('limit', String(options.limit));
+    }
+    if (options.before !== undefined) {
+      params.set('before', String(options.before));
+    }
+
+    const suffix = params.size > 0 ? `?${params.toString()}` : '';
+    const response = await request<{ events: IdeaEvent[] }>(`/ideas/${id}/events${suffix}`);
+    return response.events;
+  },
+
+  async diffIdeaEvent(ideaId: string, eventId: number): Promise<IdeaEventDiff> {
+    return request<IdeaEventDiff>(`/ideas/${ideaId}/events/${eventId}/diff`, {
+      method: 'POST'
     });
   },
 

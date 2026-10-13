@@ -1,17 +1,43 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import { dbService } from '../services/db';
 import { aiService } from '../services/ai';
-import { Idea, AppSettings, ChatMessage, STATUS_LABELS, STATUS_COLORS } from '../types';
+import { Idea, AppSettings, ChatMessage, IdeaEvent, IdeaEventDiff, STATUS_LABELS, STATUS_COLORS, StructuredAiFallbackPayload } from '../types';
 import { Chat } from '../components/features/Chat';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OpenCodeModal } from '../components/OpenCodeModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
 import { CompetitorAnalysisModal } from '../components/CompetitorAnalysisModal';
-import { ArrowLeft, Sparkles, Trash2, Terminal, Search, Swords } from 'lucide-react';
+import { StructuredAiFallback } from '../components/StructuredAiFallback';
+import { ArrowLeft, ArrowRightLeft, Pencil, PlusCircle, Search, Sparkles, Swords, Terminal, Trash2, type LucideIcon } from 'lucide-react';
 
 const TITLE_REQUIRED_MESSAGE = 'Title is required. Changes stay local and AI tools are disabled until you enter one.';
 const CHAT_BLOCKED_MESSAGE = 'Enter a title to save changes and use AI tools.';
+
+const TIMELINE_PAGE_SIZE = 10;
+
+const EVENT_LABELS: Record<IdeaEvent['type'], string> = {
+    idea_created: 'Created',
+    idea_updated: 'Updated',
+    idea_moved: 'Moved',
+    idea_deleted: 'Deleted',
+    ai_keywords_extracted: 'Keywords extracted',
+    ai_viability_report_generated: 'Viability report',
+    ai_competitor_analysis_generated: 'Competitor analysis',
+    ai_brainstorm_summarized: 'Brainstorm summarized'
+};
+
+const EVENT_ICONS: Record<IdeaEvent['type'], LucideIcon> = {
+    idea_created: PlusCircle,
+    idea_updated: Pencil,
+    idea_moved: ArrowRightLeft,
+    idea_deleted: Trash2,
+    ai_keywords_extracted: Sparkles,
+    ai_viability_report_generated: Search,
+    ai_competitor_analysis_generated: Swords,
+    ai_brainstorm_summarized: Sparkles
+};
 
 function getTitleValidationMessage(title: string): string | null {
     return title.trim().length > 0 ? null : TITLE_REQUIRED_MESSAGE;
@@ -19,6 +45,39 @@ function getTitleValidationMessage(title: string): string | null {
 
 function canPersistIdea(idea: Idea): boolean {
     return getTitleValidationMessage(idea.title) === null;
+}
+
+function formatRelativeTimestamp(timestamp: number): string {
+    const diffMs = Date.now() - timestamp;
+    const diffMinutes = Math.max(1, Math.floor(diffMs / 60000));
+
+    if (diffMinutes < 60) {
+        return `${diffMinutes}m ago`;
+    }
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+        return `${diffHours}h ago`;
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) {
+        return `${diffDays}d ago`;
+    }
+
+    return new Date(timestamp).toLocaleString();
+}
+
+function renderDiffValue(value: unknown): string {
+    if (value === null || value === undefined) {
+        return 'None';
+    }
+
+    if (typeof value === 'string') {
+        return value || '(empty)';
+    }
+
+    return JSON.stringify(value, null, 2);
 }
 
 export const Detail: React.FC = () => {
@@ -40,8 +99,22 @@ export const Detail: React.FC = () => {
     const [competitorReport, setCompetitorReport] = useState('');
     const [competitorError, setCompetitorError] = useState<string | null>(null);
     const [showCompetitorModal, setShowCompetitorModal] = useState(false);
+    const [timelineEvents, setTimelineEvents] = useState<IdeaEvent[]>([]);
+    const [timelineLoading, setTimelineLoading] = useState(false);
+    const [timelineError, setTimelineError] = useState<string | null>(null);
+    const [hasOlderEvents, setHasOlderEvents] = useState(false);
+    const [eventDiffs, setEventDiffs] = useState<Record<number, IdeaEventDiff>>({});
+    const [loadingDiffIds, setLoadingDiffIds] = useState<number[]>([]);
+    const [expandedDiffIds, setExpandedDiffIds] = useState<number[]>([]);
+    const [summaryFromId, setSummaryFromId] = useState<number | null>(null);
+    const [summaryToId, setSummaryToId] = useState<number | null>(null);
+    const [historySummary, setHistorySummary] = useState('');
+    const [historySummaryError, setHistorySummaryError] = useState<string | null>(null);
+    const [historySummaryFallback, setHistorySummaryFallback] = useState<StructuredAiFallbackPayload | null>(null);
+    const [historySummaryLoading, setHistorySummaryLoading] = useState(false);
     const viabilityStreamAbortRef = useRef<AbortController | null>(null);
     const competitorStreamAbortRef = useRef<AbortController | null>(null);
+    const historySummaryAbortRef = useRef<AbortController | null>(null);
     const viabilityStreamBufferRef = useRef('');
     const competitorStreamBufferRef = useRef('');
     const viabilityStreamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -168,6 +241,7 @@ export const Detail: React.FC = () => {
             isMountedRef.current = false;
             viabilityStreamAbortRef.current?.abort();
             competitorStreamAbortRef.current?.abort();
+            historySummaryAbortRef.current?.abort();
 
             if (viabilityStreamTimerRef.current) {
                 clearTimeout(viabilityStreamTimerRef.current);
@@ -215,6 +289,22 @@ export const Detail: React.FC = () => {
     }, [persistIdeaImmediately, handlePersistFailure]);
 
     useEffect(() => {
+        historySummaryAbortRef.current?.abort();
+        setTimelineEvents([]);
+        setTimelineError(null);
+        setHasOlderEvents(false);
+        setEventDiffs({});
+        setLoadingDiffIds([]);
+        setExpandedDiffIds([]);
+        setSummaryFromId(null);
+        setSummaryToId(null);
+        setHistorySummary('');
+        setHistorySummaryError(null);
+        setHistorySummaryFallback(null);
+        setHistorySummaryLoading(false);
+    }, [id]);
+
+    useEffect(() => {
         const init = async () => {
             if (!id) {
                 setLoading(false);
@@ -238,6 +328,108 @@ export const Detail: React.FC = () => {
         };
         init();
     }, [id]);
+
+    const loadTimeline = useCallback(async (options: { before?: number; append?: boolean } = {}) => {
+        if (!id) return;
+
+        setTimelineLoading(true);
+        setTimelineError(null);
+
+        try {
+            const events = await dbService.listIdeaEvents(id, {
+                limit: TIMELINE_PAGE_SIZE,
+                before: options.before
+            });
+
+            let nextEvents: IdeaEvent[] = events;
+            setTimelineEvents((prev) => {
+                nextEvents = options.append ? [...prev, ...events] : events;
+                return nextEvents;
+            });
+            setHasOlderEvents(events.length === TIMELINE_PAGE_SIZE);
+
+            const oldestFirst = [...nextEvents].reverse();
+            setSummaryFromId((current) => current ?? oldestFirst[0]?.id ?? null);
+            setSummaryToId((current) => current ?? oldestFirst[oldestFirst.length - 1]?.id ?? null);
+        } catch (error) {
+            setTimelineError(error instanceof Error ? error.message : 'Failed to load timeline');
+        } finally {
+            setTimelineLoading(false);
+        }
+    }, [id]);
+
+    useEffect(() => {
+        if (!id) return;
+        void loadTimeline();
+    }, [id, loadTimeline]);
+
+    const handleLoadOlderEvents = useCallback(async () => {
+        const lastEventId = timelineEvents[timelineEvents.length - 1]?.id;
+        if (!lastEventId) return;
+        await loadTimeline({ before: lastEventId, append: true });
+    }, [loadTimeline, timelineEvents]);
+
+    const handleToggleDiff = useCallback(async (eventId: number) => {
+        const isExpanded = expandedDiffIds.includes(eventId);
+        if (isExpanded) {
+            setExpandedDiffIds((prev) => prev.filter((idValue) => idValue !== eventId));
+            return;
+        }
+
+        setExpandedDiffIds((prev) => [...prev, eventId]);
+        if (eventDiffs[eventId] || !id) {
+            return;
+        }
+
+        setLoadingDiffIds((prev) => [...prev, eventId]);
+        try {
+            const diff = await dbService.diffIdeaEvent(id, eventId);
+            setEventDiffs((prev) => ({
+                ...prev,
+                [eventId]: diff
+            }));
+        } catch (error) {
+            setTimelineError(error instanceof Error ? error.message : 'Failed to load event diff');
+        } finally {
+            setLoadingDiffIds((prev) => prev.filter((idValue) => idValue !== eventId));
+        }
+    }, [eventDiffs, expandedDiffIds, id]);
+
+    const handleSummarizeHistory = useCallback(async () => {
+        if (!id || summaryFromId === null || summaryToId === null) return;
+
+        const fromId = Math.min(summaryFromId, summaryToId);
+        const toId = Math.max(summaryFromId, summaryToId);
+        const controller = new AbortController();
+
+        historySummaryAbortRef.current?.abort();
+        historySummaryAbortRef.current = controller;
+        setHistorySummary('');
+        setHistorySummaryError(null);
+        setHistorySummaryFallback(null);
+        setHistorySummaryLoading(true);
+
+        try {
+            const result = await aiService.summarizeIdeaHistoryStream(
+                id,
+                { from: fromId, to: toId },
+                setHistorySummary,
+                { signal: controller.signal }
+            );
+            setHistorySummary(result.fullText);
+            if (result.fallback) {
+                setHistorySummaryFallback(result.fallback);
+            }
+        } catch (error) {
+            if (controller.signal.aborted || isAbortError(error)) return;
+            setHistorySummaryError(error instanceof Error ? error.message : 'Failed to summarize history');
+        } finally {
+            if (historySummaryAbortRef.current === controller) {
+                historySummaryAbortRef.current = null;
+            }
+            setHistorySummaryLoading(false);
+        }
+    }, [id, isAbortError, summaryFromId, summaryToId]);
 
     // This function now only updates local state and DB for *user text edits*.
     const handleTextChange = (field: keyof Idea, value: string) => {
@@ -483,6 +675,7 @@ export const Detail: React.FC = () => {
 
     const titleValidationMessage = getTitleValidationMessage(idea.title);
     const hasPersistableTitle = titleValidationMessage === null;
+    const summaryEventOptions = [...timelineEvents].reverse();
 
     return (
         <div className="max-w-[1200px] mx-auto h-full flex flex-col w-full">
@@ -636,6 +829,152 @@ export const Detail: React.FC = () => {
                         onAppendToNote={handleAppendToNote}
                         interactionBlockedReason={titleValidationMessage ? CHAT_BLOCKED_MESSAGE : null}
                     />
+                </div>
+            </div>
+
+            <div className="card mt-6">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                        <h2 className="text-lg font-bold text-text-primary">Timeline</h2>
+                        <p className="mt-1 text-sm text-text-secondary">
+                            Event history, diffs, and an AI summary of how this idea evolved.
+                        </p>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2 md:min-w-[420px]">
+                        <select
+                            value={summaryFromId ?? ''}
+                            onChange={(e) => setSummaryFromId(e.target.value ? Number(e.target.value) : null)}
+                            className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none"
+                        >
+                            <option value="">From event</option>
+                            {summaryEventOptions.map((event) => (
+                                <option key={`from-${event.id}`} value={event.id}>
+                                    #{event.id} {EVENT_LABELS[event.type]}
+                                </option>
+                            ))}
+                        </select>
+                        <select
+                            value={summaryToId ?? ''}
+                            onChange={(e) => setSummaryToId(e.target.value ? Number(e.target.value) : null)}
+                            className="rounded-xl border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none"
+                        >
+                            <option value="">To event</option>
+                            {summaryEventOptions.map((event) => (
+                                <option key={`to-${event.id}`} value={event.id}>
+                                    #{event.id} {EVENT_LABELS[event.type]}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={handleSummarizeHistory}
+                            disabled={historySummaryLoading || summaryFromId === null || summaryToId === null}
+                            className="btn-text justify-center rounded-xl border border-border px-4 py-2 text-sm md:col-span-2"
+                        >
+                            {historySummaryLoading ? 'Summarizing...' : 'Summarize selected range'}
+                        </button>
+                    </div>
+                </div>
+
+                {(historySummaryLoading || historySummary || historySummaryFallback || historySummaryError) && (
+                    <div className="mt-4 rounded-2xl border border-border bg-background p-4">
+                        {historySummaryError && (
+                            <p className="text-sm text-danger">{historySummaryError}</p>
+                        )}
+                        {historySummaryFallback ? (
+                            <StructuredAiFallback
+                                rawOutput={historySummaryFallback.rawOutput}
+                                title={historySummaryFallback.title}
+                                message={historySummaryFallback.message}
+                            />
+                        ) : (
+                            <div className="markdown-body text-sm leading-relaxed text-text-primary">
+                                <ReactMarkdown>{historySummary || (historySummaryLoading ? 'Generating summary...' : '')}</ReactMarkdown>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                <div className="mt-6 space-y-3">
+                    {timelineError && (
+                        <p className="text-sm text-danger">{timelineError}</p>
+                    )}
+                    {!timelineLoading && timelineEvents.length === 0 && !timelineError && (
+                        <p className="text-sm text-text-secondary">No events recorded yet.</p>
+                    )}
+                    {timelineEvents.map((event) => {
+                        const Icon = EVENT_ICONS[event.type];
+                        const diff = eventDiffs[event.id];
+                        const isDiffExpanded = expandedDiffIds.includes(event.id);
+                        const isDiffLoading = loadingDiffIds.includes(event.id);
+
+                        return (
+                            <div key={event.id} className="rounded-2xl border border-border bg-background p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="flex items-start gap-3">
+                                        <div className="rounded-xl bg-accent/10 p-2 text-accent">
+                                            <Icon size={16} />
+                                        </div>
+                                        <div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="text-sm font-semibold text-text-primary">{EVENT_LABELS[event.type]}</span>
+                                                <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary">#{event.id}</span>
+                                            </div>
+                                            <p className="mt-1 text-xs text-text-secondary">
+                                                {formatRelativeTimestamp(event.createdAt)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => void handleToggleDiff(event.id)}
+                                        className="btn-text text-xs"
+                                    >
+                                        {isDiffExpanded ? 'Hide diff' : 'Show diff'}
+                                    </button>
+                                </div>
+
+                                {isDiffExpanded && (
+                                    <div className="mt-4 rounded-xl border border-border/80 bg-surface p-4">
+                                        {isDiffLoading && (
+                                            <p className="text-sm text-text-secondary">Loading diff...</p>
+                                        )}
+                                        {!isDiffLoading && diff && (
+                                            <div className="space-y-4 text-sm text-text-primary">
+                                                {diff.fields.length > 0 ? diff.fields.map((field) => (
+                                                    <div key={field.name} className="grid gap-2 md:grid-cols-2">
+                                                        <div>
+                                                            <p className="mb-1 text-xs font-bold uppercase tracking-wide text-text-secondary">{field.name} before</p>
+                                                            <pre className="whitespace-pre-wrap break-words rounded-lg bg-background p-3 text-xs">{renderDiffValue(field.before)}</pre>
+                                                        </div>
+                                                        <div>
+                                                            <p className="mb-1 text-xs font-bold uppercase tracking-wide text-text-secondary">{field.name} after</p>
+                                                            <pre className="whitespace-pre-wrap break-words rounded-lg bg-background p-3 text-xs">{renderDiffValue(field.after)}</pre>
+                                                        </div>
+                                                    </div>
+                                                )) : (
+                                                    <p className="text-sm text-text-secondary">No top-level field changes in this event.</p>
+                                                )}
+                                                <div className="flex flex-wrap gap-3 text-xs text-text-secondary">
+                                                    <span>Chat turns added: {diff.chatTurnsAdded}</span>
+                                                    <span>Keywords added: {diff.keywordsAdded.join(', ') || 'None'}</span>
+                                                    <span>Keywords removed: {diff.keywordsRemoved.join(', ') || 'None'}</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    {hasOlderEvents && (
+                        <button
+                            onClick={() => void handleLoadOlderEvents()}
+                            disabled={timelineLoading}
+                            className="btn-text"
+                        >
+                            {timelineLoading ? 'Loading...' : 'Load older'}
+                        </button>
+                    )}
                 </div>
             </div>
 
