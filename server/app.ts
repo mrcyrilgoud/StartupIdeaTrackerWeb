@@ -3,15 +3,16 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { StructuredParseError, type BackendAiService } from './ai.js';
-import { appSettingsSchema, brainstormSchema, folderSchema, generateIdeasSchema, ideaChatSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, importDataSchema, saveIdeaSchema, suggestFoldersSchema, summarizeChatSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
+import { MAX_HISTORY_SUMMARY_EVENTS, appSettingsSchema, brainstormSchema, diffIdeaEventInputSchema, folderSchema, generateIdeasSchema, ideaChatSchema, ideaEventDiffSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, importDataSchema, listIdeaEventsInputSchema, saveIdeaRequestSchema, suggestFoldersSchema, summarizeChatSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
 import { createIdeaMcpServer } from './mcp.js';
 import { getAllowedOrigins, SERVER_HOST } from './config.js';
 import { NotFoundError } from './errors.js';
+import { computeIdeaEventDiff } from './ideaHistory.js';
 import type { AppStore } from './store.js';
 import type { ChatMessage, Idea } from '../src/types.js';
 
 type ParsedRequest<T> = Request<Record<string, string>, unknown, T>;
-type SaveIdeaInput = z.infer<typeof saveIdeaSchema>;
+type SaveIdeaInput = z.infer<typeof saveIdeaRequestSchema>;
 
 function parseBody<T>(schema: z.ZodSchema<T>, value: unknown): T {
   return schema.parse(value);
@@ -40,9 +41,10 @@ function isIdea(value: Idea | undefined): value is Idea {
 }
 
 function normalizeIdeaForStorage(input: SaveIdeaInput): Idea {
+  const { eventContext: _eventContext, ...idea } = input;
   return {
-    ...input,
-    folder_id: input.folder_id ?? undefined
+    ...idea,
+    folder_id: idea.folder_id ?? undefined
   };
 }
 
@@ -72,7 +74,10 @@ function normalizeChatHistory(history: ChatMessage[] | undefined, prompt: string
 function sendStream(
   req: Request,
   res: Response,
-  runner: (emitDelta: (delta: string) => void, signal: AbortSignal) => Promise<string>
+  runner: (emitDelta: (delta: string) => void, signal: AbortSignal) => Promise<string>,
+  options: {
+    onErrorPayload?: (error: unknown) => Record<string, unknown>;
+  } = {}
 ): void {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -94,6 +99,10 @@ function sendStream(
     })
     .catch((error: unknown) => {
       if (controller.signal.aborted) {
+        return;
+      }
+      if (options.onErrorPayload) {
+        res.write(`data: ${JSON.stringify(options.onErrorPayload(error))}\n\n`);
         return;
       }
       const message = error instanceof Error ? error.message : 'Unknown streaming error';
@@ -178,9 +187,76 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
     }
   });
 
+  app.get('/api/ideas/:id/events', async (req, res, next) => {
+    try {
+      const input = parseBody(listIdeaEventsInputSchema, {
+        ideaId: req.params.id,
+        ...req.query
+      }) as z.infer<typeof listIdeaEventsInputSchema>;
+      const events = await store.listIdeaEvents(input.ideaId, input);
+      res.json({ events });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/ideas/:id/events/:eventId/diff', async (req, res, next) => {
+    try {
+      const input = parseBody(diffIdeaEventInputSchema, {
+        ideaId: req.params.id,
+        eventId: req.params.eventId
+      }) as z.infer<typeof diffIdeaEventInputSchema>;
+      const event = await store.getIdeaEvent(input.eventId);
+      if (!event || event.ideaId !== input.ideaId) {
+        res.status(404).json({ error: 'Idea event not found' });
+        return;
+      }
+
+      const previousEvent = await store.getPreviousIdeaEvent(input.ideaId, input.eventId);
+      res.json(ideaEventDiffSchema.parse(computeIdeaEventDiff(event.snapshot, previousEvent?.snapshot)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/ideas/:id/history/summary', async (req, res, next) => {
+    try {
+      const input = parseBody(summarizeIdeaHistoryInputSchema, {
+        ideaId: req.params.id,
+        ...req.body
+      }) as z.infer<typeof summarizeIdeaHistoryInputSchema>;
+      const events = await store.listIdeaEventsInRange(input.ideaId, input.from, input.to);
+      if (events.length === 0 || events[0].id !== input.from || events[events.length - 1].id !== input.to) {
+        res.status(404).json({ error: 'Idea event range not found' });
+        return;
+      }
+      if (events.length > MAX_HISTORY_SUMMARY_EVENTS) {
+        res.status(400).json({ error: `History summary range exceeds ${MAX_HISTORY_SUMMARY_EVENTS} events` });
+        return;
+      }
+
+      sendStream(req, res, (emitDelta, signal) => aiService.summarizeIdeaHistoryStream(events, emitDelta, { emitDelta: true, signal }), {
+        onErrorPayload: (error) => ({
+          done: true,
+          fallback: {
+            rawOutput: error instanceof Error ? error.message : 'Unknown AI history summary error',
+            title: 'History Summary Unavailable',
+            message: 'The AI provider failed while summarizing this history range. Showing the raw error output instead.'
+          }
+        })
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/ideas', async (req: ParsedRequest<SaveIdeaInput>, res, next) => {
     try {
-      const idea = await store.saveIdea(normalizeIdeaForStorage(parseBody(saveIdeaSchema, req.body)));
+      const body = parseBody(saveIdeaRequestSchema, req.body);
+      const idea = await store.saveIdeaWithEventContext(
+        normalizeIdeaForStorage(body),
+        body.eventContext
+      );
       res.status(201).json(idea);
     } catch (error) {
       next(error);
@@ -323,7 +399,12 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         res.status(404).json({ error: 'Idea not found' });
         return;
       }
-      res.json({ keywords: await aiService.extractKeywords(idea) });
+      const keywords = await aiService.extractKeywords(idea);
+      await store.appendIdeaEvent(body.ideaId, 'ai_keywords_extracted', {
+        keywordCount: keywords.length,
+        keywords
+      });
+      res.json({ keywords });
     } catch (error) {
       next(error);
     }
@@ -342,11 +423,21 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
       }
 
       if (body.stream) {
-        sendStream(req, res, (emitDelta, signal) => aiService.generateViabilityReportStream(idea, emitDelta, { emitDelta: true, signal }));
+        sendStream(req, res, async (emitDelta, signal) => {
+          const report = await aiService.generateViabilityReportStream(idea, emitDelta, { emitDelta: true, signal });
+          await store.appendIdeaEvent(body.ideaId, 'ai_viability_report_generated', {
+            reportLength: report.length
+          });
+          return report;
+        });
         return;
       }
 
-      res.json({ report: await aiService.generateViabilityReport(idea) });
+      const report = await aiService.generateViabilityReport(idea);
+      await store.appendIdeaEvent(body.ideaId, 'ai_viability_report_generated', {
+        reportLength: report.length
+      });
+      res.json({ report });
     } catch (error) {
       next(error);
     }
@@ -365,11 +456,21 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
       }
 
       if (body.stream) {
-        sendStream(req, res, (emitDelta, signal) => aiService.analyzeCompetitorsStream(idea, emitDelta, { emitDelta: true, signal }));
+        sendStream(req, res, async (emitDelta, signal) => {
+          const report = await aiService.analyzeCompetitorsStream(idea, emitDelta, { emitDelta: true, signal });
+          await store.appendIdeaEvent(body.ideaId, 'ai_competitor_analysis_generated', {
+            reportLength: report.length
+          });
+          return report;
+        });
         return;
       }
 
-      res.json({ report: await aiService.analyzeCompetitors(idea) });
+      const report = await aiService.analyzeCompetitors(idea);
+      await store.appendIdeaEvent(body.ideaId, 'ai_competitor_analysis_generated', {
+        reportLength: report.length
+      });
+      res.json({ report });
     } catch (error) {
       next(error);
     }

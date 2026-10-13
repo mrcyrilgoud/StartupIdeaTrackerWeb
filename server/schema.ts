@@ -50,6 +50,16 @@ export const ideaVettingResultsTable = sqliteTable('idea_vetting_results', {
   pk: primaryKey({ columns: [table.ideaId, table.criteria] })
 }));
 
+export const ideaEventsTable = sqliteTable('idea_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ideaId: text('idea_id').notNull(),
+  liveIdeaId: text('live_idea_id').references(() => ideasTable.id, { onDelete: 'set null' }),
+  type: text('type').notNull(),
+  payloadJson: text('payload_json').notNull(),
+  snapshotJson: text('snapshot_json').notNull(),
+  createdAt: integer('created_at').notNull()
+});
+
 export const appSettingsTable = sqliteTable('app_settings', {
   id: text('id').primaryKey(),
   provider: text('provider').notNull(),
@@ -73,6 +83,7 @@ export const schema = {
   ideaRelatedTable,
   ideaChatMessagesTable,
   ideaVettingResultsTable,
+  ideaEventsTable,
   appSettingsTable,
   appMetadataTable
 };

@@ -35,6 +35,44 @@ export interface Idea {
   vetting?: Partial<Record<VettingCriteria, VettingResult>>;
 }
 
+export type IdeaEventType =
+  | 'idea_created'
+  | 'idea_updated'
+  | 'idea_moved'
+  | 'idea_deleted'
+  | 'ai_keywords_extracted'
+  | 'ai_viability_report_generated'
+  | 'ai_competitor_analysis_generated'
+  | 'ai_brainstorm_summarized';
+
+export interface IdeaEvent<TPayload = Record<string, unknown>> {
+  id: number;
+  ideaId: string;
+  type: IdeaEventType;
+  payload: TPayload;
+  snapshot: Idea;
+  createdAt: number;
+}
+
+export interface IdeaEventDiffField {
+  name: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface IdeaEventDiff {
+  fields: IdeaEventDiffField[];
+  chatTurnsAdded: number;
+  keywordsAdded: string[];
+  keywordsRemoved: string[];
+}
+
+export interface StructuredAiFallbackPayload {
+  rawOutput: string;
+  title?: string;
+  message?: string;
+}
+
 export type IdeaStatus = Idea['status'];
 
 export const STATUS_LABELS: Record<IdeaStatus, string> = {

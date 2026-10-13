@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { appSettingsTable, foldersTable, schema } from './schema.js';
 import { NotFoundError } from './errors.js';
-import { DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea, type VettingCriteria, type VettingResult } from '../src/types.js';
+import { DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventType, type VettingCriteria, type VettingResult } from '../src/types.js';
 import type { IdeaListQuery, UpdateIdeaInput } from './contracts.js';
 
 type SqliteDatabase = Database.Database;
@@ -54,6 +54,16 @@ type VettingRow = {
   created_at: number;
 };
 
+type IdeaEventRow = {
+  id: number;
+  idea_id: string;
+  live_idea_id: string | null;
+  type: IdeaEventType;
+  payload_json: string;
+  snapshot_json: string;
+  created_at: number;
+};
+
 type ExportPayload = {
   version: number;
   timestamp: number;
@@ -68,6 +78,11 @@ type CountRow = {
 
 type MetadataRow = {
   value: string;
+};
+
+type SaveIdeaEventContext = {
+  type: IdeaEventType;
+  payload?: Record<string, unknown>;
 };
 
 function ensureDirectory(filePath: string): void {
@@ -143,6 +158,20 @@ export function initializeSchema(sqlite: SqliteDatabase): void {
       FOREIGN KEY (idea_id) REFERENCES ideas(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS idea_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idea_id TEXT NOT NULL,
+      live_idea_id TEXT,
+      type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (live_idea_id) REFERENCES ideas(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idea_events_idea_id_idx
+    ON idea_events (idea_id, id DESC);
+
     CREATE TABLE IF NOT EXISTS app_settings (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
@@ -159,6 +188,19 @@ export function initializeSchema(sqlite: SqliteDatabase): void {
       updated_at INTEGER NOT NULL
     );
   `);
+
+  const ideaEventsColumns = sqlite.prepare('PRAGMA table_info(idea_events)').all() as Array<{ name: string }>;
+  const hasLiveIdeaId = ideaEventsColumns.some((column) => column.name === 'live_idea_id');
+  if (!hasLiveIdeaId) {
+    sqlite.exec('ALTER TABLE idea_events ADD COLUMN live_idea_id TEXT REFERENCES ideas(id) ON DELETE SET NULL');
+  }
+
+  sqlite.exec(`
+    UPDATE idea_events
+    SET live_idea_id = idea_id
+    WHERE live_idea_id IS NULL
+      AND EXISTS (SELECT 1 FROM ideas WHERE ideas.id = idea_events.idea_id)
+  `);
 }
 
 export class AppStore {
@@ -169,6 +211,8 @@ export class AppStore {
     folders?: Folder[];
     settings?: Partial<AppSettings>;
   }) => void;
+  private readonly saveIdeaTransaction: (idea: Idea, eventContext?: SaveIdeaEventContext) => Idea;
+  private readonly deleteIdeaTransaction: (id: string, payload?: Record<string, unknown>) => void;
 
   constructor(sqlite: SqliteDatabase) {
     this.sqlite = sqlite;
@@ -193,6 +237,32 @@ export class AppStore {
           ...payload.settings
         });
       }
+    });
+    this.saveIdeaTransaction = this.sqlite.transaction((idea: Idea, eventContext?: SaveIdeaEventContext) => {
+      const existing = this.getIdeaSync(idea.id);
+      this.saveIdeaSync(idea);
+      const snapshot = this.getIdeaSync(idea.id);
+      if (!snapshot) {
+        throw new Error(`Failed to reload idea ${idea.id} after save`);
+      }
+
+      const mutationType = this.deriveIdeaSaveEventType(existing, snapshot);
+      const mutationPayload = this.buildDefaultIdeaEventPayload(mutationType, existing, snapshot);
+      this.insertIdeaEventSync(snapshot.id, mutationType, mutationPayload, snapshot);
+
+      if (eventContext && eventContext.type !== mutationType) {
+        this.insertIdeaEventSync(snapshot.id, eventContext.type, eventContext.payload ?? {}, snapshot);
+      }
+      return snapshot;
+    });
+    this.deleteIdeaTransaction = this.sqlite.transaction((id: string, payload?: Record<string, unknown>) => {
+      const existing = this.getIdeaSync(id);
+      if (!existing) {
+        return;
+      }
+
+      this.insertIdeaEventSync(id, 'idea_deleted', payload ?? this.buildDefaultDeletePayload(existing), existing);
+      this.sqlite.prepare('DELETE FROM ideas WHERE id = ?').run(id);
     });
   }
 
@@ -405,6 +475,110 @@ export class AppStore {
     return baseRows.map((row) => ideas.get(row.id) as Idea);
   }
 
+  private getIdeaSync(id: string): Idea | undefined {
+    const row = this.sqlite.prepare(`
+      SELECT id, title, details, analysis, status, folder_id, created_at, updated_at
+      FROM ideas
+      WHERE id = ?
+    `).get(id) as IdeaRow | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return this.hydrateIdeas([row])[0];
+  }
+
+  private deriveIdeaSaveEventType(previous: Idea | undefined, next: Idea): IdeaEventType {
+    if (!previous) {
+      return 'idea_created';
+    }
+
+    if (previous.folder_id !== next.folder_id) {
+      return 'idea_moved';
+    }
+
+    return 'idea_updated';
+  }
+
+  private buildDefaultIdeaEventPayload(type: IdeaEventType, previous: Idea | undefined, next: Idea): Record<string, unknown> {
+    if (type === 'idea_created') {
+      return {
+        createdAt: next.timestamp
+      };
+    }
+
+    if (type === 'idea_moved') {
+      return {
+        fromFolderId: previous?.folder_id ?? null,
+        toFolderId: next.folder_id ?? null
+      };
+    }
+
+    return {
+      updatedFields: this.collectChangedIdeaFields(previous, next)
+    };
+  }
+
+  private buildDefaultDeletePayload(idea: Idea): Record<string, unknown> {
+    return {
+      title: idea.title,
+      status: idea.status,
+      folderId: idea.folder_id ?? null
+    };
+  }
+
+  private collectChangedIdeaFields(previous: Idea | undefined, next: Idea): string[] {
+    if (!previous) {
+      return [];
+    }
+
+    const changedFields: string[] = [];
+    if (previous.title !== next.title) changedFields.push('title');
+    if (previous.details !== next.details) changedFields.push('details');
+    if ((previous.analysis ?? null) !== (next.analysis ?? null)) changedFields.push('analysis');
+    if (previous.status !== next.status) changedFields.push('status');
+    if ((previous.folder_id ?? null) !== (next.folder_id ?? null)) changedFields.push('folder_id');
+    if (JSON.stringify(previous.keywords) !== JSON.stringify(next.keywords)) changedFields.push('keywords');
+    if (JSON.stringify(previous.relatedIdeas) !== JSON.stringify(next.relatedIdeas)) changedFields.push('relatedIdeas');
+    if (JSON.stringify(previous.chatHistory) !== JSON.stringify(next.chatHistory)) changedFields.push('chatHistory');
+    if (JSON.stringify(previous.vetting ?? {}) !== JSON.stringify(next.vetting ?? {})) changedFields.push('vetting');
+    return changedFields;
+  }
+
+  private insertIdeaEventSync(
+    ideaId: string,
+    type: IdeaEventType,
+    payload: Record<string, unknown>,
+    snapshot: Idea,
+    createdAt = Date.now()
+  ): number {
+    const result = this.sqlite.prepare(`
+      INSERT INTO idea_events (idea_id, live_idea_id, type, payload_json, snapshot_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      ideaId,
+      snapshot.id,
+      type,
+      JSON.stringify(payload),
+      JSON.stringify(snapshot),
+      createdAt
+    );
+
+    return Number(result.lastInsertRowid);
+  }
+
+  private hydrateIdeaEvents(rows: IdeaEventRow[]): IdeaEvent[] {
+    return rows.map((row) => ({
+      id: row.id,
+      ideaId: row.idea_id,
+      type: row.type,
+      payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+      snapshot: JSON.parse(row.snapshot_json) as Idea,
+      createdAt: row.created_at
+    }));
+  }
+
   private overwriteIdeaRelations(idea: Idea): void {
     this.sqlite.prepare('DELETE FROM idea_keywords WHERE idea_id = ?').run(idea.id);
     this.sqlite.prepare('DELETE FROM idea_related WHERE idea_id = ?').run(idea.id);
@@ -487,22 +661,15 @@ export class AppStore {
   }
 
   async getIdea(id: string): Promise<Idea | undefined> {
-    const row = this.sqlite.prepare(`
-      SELECT id, title, details, analysis, status, folder_id, created_at, updated_at
-      FROM ideas
-      WHERE id = ?
-    `).get(id) as IdeaRow | undefined;
-
-    if (!row) {
-      return undefined;
-    }
-
-    return this.hydrateIdeas([row])[0];
+    return this.getIdeaSync(id);
   }
 
   async saveIdea(idea: Idea): Promise<Idea> {
-    this.saveIdeaSync(idea);
-    return (await this.getIdea(idea.id)) as Idea;
+    return this.saveIdeaTransaction(idea);
+  }
+
+  async saveIdeaWithEventContext(idea: Idea, eventContext?: SaveIdeaEventContext): Promise<Idea> {
+    return this.saveIdeaTransaction(idea, eventContext);
   }
 
   async updateIdea(id: string, patch: UpdateIdeaInput): Promise<Idea> {
@@ -534,11 +701,90 @@ export class AppStore {
       vetting: mergedVetting
     };
 
-    return this.saveIdea(nextIdea);
+    return this.saveIdeaTransaction(nextIdea);
   }
 
   async deleteIdea(id: string): Promise<void> {
-    this.sqlite.prepare('DELETE FROM ideas WHERE id = ?').run(id);
+    this.deleteIdeaTransaction(id);
+  }
+
+  async appendIdeaEvent(
+    ideaId: string,
+    type: IdeaEventType,
+    payload: Record<string, unknown> = {}
+  ): Promise<IdeaEvent> {
+    const snapshot = await this.getIdea(ideaId);
+    if (!snapshot) {
+      throw new NotFoundError(`Idea ${ideaId} not found`);
+    }
+
+    const eventId = this.insertIdeaEventSync(ideaId, type, payload, snapshot);
+    const event = await this.getIdeaEvent(eventId);
+    if (!event) {
+      throw new Error(`Failed to reload idea event ${eventId}`);
+    }
+    return event;
+  }
+
+  async listIdeaEvents(ideaId: string, options: { limit?: number; before?: number } = {}): Promise<IdeaEvent[]> {
+    const params: Array<string | number> = [ideaId];
+    let sqlText = `
+      SELECT id, idea_id, live_idea_id, type, payload_json, snapshot_json, created_at
+      FROM idea_events
+      WHERE idea_id = ?
+    `;
+
+    if (options.before !== undefined) {
+      sqlText += ' AND id < ?';
+      params.push(options.before);
+    }
+
+    sqlText += ' ORDER BY id DESC LIMIT ?';
+    params.push(options.limit ?? 25);
+
+    const rows = this.sqlite.prepare(sqlText).all(...params) as IdeaEventRow[];
+    return this.hydrateIdeaEvents(rows);
+  }
+
+  async getIdeaEvent(id: number): Promise<IdeaEvent | undefined> {
+    const row = this.sqlite.prepare(`
+      SELECT id, idea_id, live_idea_id, type, payload_json, snapshot_json, created_at
+      FROM idea_events
+      WHERE id = ?
+    `).get(id) as IdeaEventRow | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return this.hydrateIdeaEvents([row])[0];
+  }
+
+  async getPreviousIdeaEvent(ideaId: string, beforeEventId: number): Promise<IdeaEvent | undefined> {
+    const row = this.sqlite.prepare(`
+      SELECT id, idea_id, live_idea_id, type, payload_json, snapshot_json, created_at
+      FROM idea_events
+      WHERE idea_id = ? AND id < ?
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(ideaId, beforeEventId) as IdeaEventRow | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return this.hydrateIdeaEvents([row])[0];
+  }
+
+  async listIdeaEventsInRange(ideaId: string, fromId: number, toId: number): Promise<IdeaEvent[]> {
+    const rows = this.sqlite.prepare(`
+      SELECT id, idea_id, live_idea_id, type, payload_json, snapshot_json, created_at
+      FROM idea_events
+      WHERE idea_id = ? AND id >= ? AND id <= ?
+      ORDER BY id ASC
+    `).all(ideaId, fromId, toId) as IdeaEventRow[];
+
+    return this.hydrateIdeaEvents(rows);
   }
 
   async listFolders(): Promise<Folder[]> {

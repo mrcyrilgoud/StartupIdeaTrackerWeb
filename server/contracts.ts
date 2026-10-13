@@ -51,7 +51,81 @@ export const appSettingsSchema = z.object({
   cliCommandTemplate: z.string()
 });
 
+export const ideaEventTypeSchema = z.enum([
+  'idea_created',
+  'idea_updated',
+  'idea_moved',
+  'idea_deleted',
+  'ai_keywords_extracted',
+  'ai_viability_report_generated',
+  'ai_competitor_analysis_generated',
+  'ai_brainstorm_summarized'
+]);
+
+export const ideaEventContextSchema = z.object({
+  type: ideaEventTypeSchema,
+  payload: z.record(z.unknown()).optional()
+});
+
+export const ideaEventSchema = z.object({
+  id: z.number().int(),
+  ideaId: z.string(),
+  type: ideaEventTypeSchema,
+  payload: z.record(z.unknown()),
+  snapshot: ideaSchema,
+  createdAt: z.number()
+});
+
+export const ideaEventsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  before: z.coerce.number().int().positive().optional()
+});
+
+export const ideaEventDiffFieldSchema = z.object({
+  name: z.string(),
+  before: z.unknown(),
+  after: z.unknown()
+});
+
+export const ideaEventDiffSchema = z.object({
+  fields: z.array(ideaEventDiffFieldSchema),
+  chatTurnsAdded: z.number().int().min(0),
+  keywordsAdded: z.array(z.string()),
+  keywordsRemoved: z.array(z.string())
+});
+
+const ideaHistorySummaryFieldsSchema = z.object({
+  from: z.number().int().positive(),
+  to: z.number().int().positive()
+});
+
+export const MAX_HISTORY_SUMMARY_EVENTS = 50;
+
+export const ideaHistorySummaryRequestSchema = ideaHistorySummaryFieldsSchema.refine((value) => value.from <= value.to, {
+  message: '`from` must be less than or equal to `to`',
+  path: ['from']
+});
+
+export const listIdeaEventsInputSchema = ideaEventsQuerySchema.extend({
+  ideaId: z.string()
+});
+
+export const diffIdeaEventInputSchema = z.object({
+  ideaId: z.string(),
+  eventId: z.coerce.number().int().positive()
+});
+
+export const summarizeIdeaHistoryInputSchema = ideaHistorySummaryFieldsSchema.extend({
+  ideaId: z.string()
+}).refine((value) => value.from <= value.to, {
+  message: '`from` must be less than or equal to `to`',
+  path: ['from']
+});
+
 export const saveIdeaSchema = ideaSchema;
+export const saveIdeaRequestSchema = saveIdeaSchema.extend({
+  eventContext: ideaEventContextSchema.optional()
+});
 export const updateIdeaSchema = z.object({
   title: z.string().min(1).optional(),
   details: z.string().optional(),

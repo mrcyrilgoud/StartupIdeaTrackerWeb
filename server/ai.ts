@@ -1,5 +1,6 @@
 import { CLI_PROXY_BASE_URL } from './config.js';
-import type { AppSettings, ChatMessage, Idea, VettingCriteria, VettingResult } from '../src/types.js';
+import type { AppSettings, ChatMessage, Idea, IdeaEvent, VettingCriteria, VettingResult } from '../src/types.js';
+import { buildIdeaHistorySummaryPrompt } from './ideaHistory.js';
 import { StructuredParseError } from '../shared/structuredAiError.js';
 
 export { StructuredParseError };
@@ -579,6 +580,10 @@ User: ${prompt}
 
   async analyzeCompetitors(idea: Idea): Promise<string> {
     return this.generateResponse(this.buildCompetitorPrompt(idea), true);
+  }
+
+  async summarizeIdeaHistoryStream(events: IdeaEvent[], onChunk: (text: string) => void, options: StreamOptions = {}): Promise<string> {
+    return this.generateResponseStream(buildIdeaHistorySummaryPrompt(events), onChunk, true, undefined, options);
   }
 
   async brainstorm(prompt: string, history: ChatMessage[], options: RequestOptions = {}): Promise<string> {
