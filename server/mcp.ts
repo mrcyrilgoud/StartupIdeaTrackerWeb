@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { saveIdeaSchema, updateIdeaSchema } from './contracts.js';
+import { MAX_HISTORY_SUMMARY_EVENTS, diffIdeaEventInputSchema, ideaEventDiffSchema, listIdeaEventsInputSchema, saveIdeaSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema } from './contracts.js';
 import type { BackendAiService } from './ai.js';
 import { summarizeBrainstormToIdeaWithFallback } from './brainstorm.js';
+import { computeIdeaEventDiff } from './ideaHistory.js';
 import type { AppStore } from './store.js';
 import type { ChatMessage, Idea } from '../src/types.js';
 
@@ -79,6 +80,55 @@ export function createIdeaMcpServer(store: AppStore, aiService: BackendAiService
       throw new Error(`Idea ${ideaId} not found.`);
     }
     return toolResult(`Fetched idea ${idea.title}.`, { idea });
+  });
+
+  server.registerTool('list_idea_events', {
+    description: 'List historical events for a single idea, newest first.',
+    inputSchema: listIdeaEventsInputSchema
+  }, async ({ ideaId, limit, before }) => {
+    const events = await store.listIdeaEvents(ideaId, { limit, before });
+    return toolResult(`Returned ${events.length} events for idea ${ideaId}.`, { events });
+  });
+
+  server.registerTool('diff_idea_event', {
+    description: 'Compute the structured diff for an idea event versus its immediately preceding event.',
+    inputSchema: diffIdeaEventInputSchema
+  }, async ({ ideaId, eventId }) => {
+    const event = await store.getIdeaEvent(eventId);
+    if (!event || event.ideaId !== ideaId) {
+      throw new Error(`Idea event ${eventId} not found for idea ${ideaId}.`);
+    }
+
+    const previousEvent = await store.getPreviousIdeaEvent(ideaId, eventId);
+    const diff = ideaEventDiffSchema.parse(computeIdeaEventDiff(event.snapshot, previousEvent?.snapshot));
+    return toolResult(`Computed diff for idea event ${eventId}.`, diff);
+  });
+
+  server.registerTool('summarize_idea_history', {
+    description: 'Summarize how an idea evolved across a contiguous event-id range.',
+    inputSchema: summarizeIdeaHistoryInputSchema
+  }, async ({ ideaId, from, to }: z.infer<typeof summarizeIdeaHistoryInputSchema>) => {
+    const events = await store.listIdeaEventsInRange(ideaId, from, to);
+    if (events.length === 0 || events[0].id !== from || events[events.length - 1].id !== to) {
+      throw new Error(`Idea event range ${from}-${to} not found for idea ${ideaId}.`);
+    }
+    if (events.length > MAX_HISTORY_SUMMARY_EVENTS) {
+      throw new Error(`History summary range exceeds ${MAX_HISTORY_SUMMARY_EVENTS} events.`);
+    }
+
+    try {
+      const summary = await aiService.summarizeIdeaHistoryStream(events, () => undefined);
+      return toolResult('Generated idea history summary.', { summary });
+    } catch (error) {
+      const rawOutput = error instanceof Error ? error.message : 'Unknown AI history summary error';
+      return toolResult('AI provider failed; returning StructuredAiFallback-compatible payload instead.', {
+        fallback: {
+          rawOutput,
+          title: 'History Summary Unavailable',
+          message: 'The AI provider failed while summarizing this history range. Showing the raw error output instead.'
+        }
+      });
+    }
   });
 
   server.registerTool('ideas.create', {
