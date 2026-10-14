@@ -95,6 +95,10 @@ html.dark {
     @apply bg-gradient-to-r from-indigo-500 to-indigo-600 text-white py-2.5 px-5 rounded-xl border-none font-semibold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0;
   }
 
+  .btn-secondary {
+    @apply bg-surface text-text-primary py-2.5 px-5 rounded-xl border border-border font-semibold cursor-pointer transition-all duration-200 hover:bg-background dark:hover:bg-slate-700/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-surface;
+  }
+
   .input {
     @apply bg-background border border-border text-text-primary py-2.5 px-4 rounded-xl w-full box-border focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-accent transition-all duration-200;
   }

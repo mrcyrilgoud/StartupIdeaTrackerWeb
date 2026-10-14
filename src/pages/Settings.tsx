@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { dbService } from '../services/db';
 import { connectionsService } from '../services/connections';
 import { useTheme } from '../context/ThemeContext';
@@ -10,6 +10,7 @@ export const SettingsPage: React.FC = () => {
     const [dataBusy, setDataBusy] = useState(false);
     const [dataError, setDataError] = useState('');
     const [dataMessage, setDataMessage] = useState('');
+    const importInputRef = useRef<HTMLInputElement>(null);
 
     async function exportBackup() {
         setDataBusy(true); setDataError(''); setDataMessage('');
@@ -55,7 +56,7 @@ export const SettingsPage: React.FC = () => {
     return (
         <div className="max-w-[760px] mx-auto pb-12">
             <h2 className="text-2xl font-bold mb-6">Settings</h2>
-            <div className="card flex flex-col gap-4">
+            <div className="card flex flex-col gap-6 p-4 sm:p-6">
                 <section>
                     <h3 className="text-xl mb-4 font-semibold">Appearance</h3>
                     <div className="flex bg-background border border-border p-1 rounded-xl w-full sm:w-fit">
@@ -74,16 +75,27 @@ export const SettingsPage: React.FC = () => {
                         ))}
                     </div>
                 </section>
-                <div className="pt-4 border-t border-border"><AiConnectionEditor /></div>
-                <section className="pt-4 border-t border-border">
+                <div className="pt-6 border-t border-border"><AiConnectionEditor /></div>
+                <section className="pt-6 border-t border-border">
                     <h3 className="text-xl mb-4 font-semibold">Data Management</h3>
                     {dataError && <p role="alert" className="text-red-600 dark:text-red-400 mb-3">{dataError}</p>}
                     {dataMessage && <p role="status" className="mb-3">{dataMessage}</p>}
-                    <div className="flex flex-col gap-4 sm:flex-row">
-                        <button type="button" className="btn-primary" disabled={dataBusy} onClick={() => void exportBackup()}>Export Backup</button>
-                        <label className={`btn-primary bg-surface border border-border text-text-primary hover:bg-background cursor-pointer flex items-center justify-center ${dataBusy ? 'opacity-50' : ''}`}>
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                        <button type="button" className="btn-primary w-full sm:w-auto" disabled={dataBusy} onClick={() => void exportBackup()}>Export Backup</button>
+                        <label
+                            className={`btn-secondary flex w-full items-center justify-center sm:w-auto ${dataBusy ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                            tabIndex={dataBusy ? -1 : 0}
+                            role="button"
+                            aria-disabled={dataBusy}
+                            onKeyDown={event => {
+                                if (!dataBusy && (event.key === 'Enter' || event.key === ' ')) {
+                                    event.preventDefault();
+                                    importInputRef.current?.click();
+                                }
+                            }}
+                        >
                             Import Backup
-                            <input type="file" accept=".json,application/json" className="hidden" disabled={dataBusy}
+                            <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" disabled={dataBusy}
                                 onChange={event => {
                                     const file = event.target.files?.[0];
                                     event.target.value = '';
