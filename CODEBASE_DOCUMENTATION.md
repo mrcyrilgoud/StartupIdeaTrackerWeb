@@ -71,6 +71,9 @@ The frontend no longer owns persistence directly. It reads and writes through th
 - `POST /api/ai/connections/:id/test`
 - `GET /api/ai/connections/:id/models`
 - `GET /api/ai/status`
+- `GET /api/ai/openai-auth`
+- `POST /api/ai/openai-auth/start`
+- `POST /api/ai/openai-auth/logout`
 - `GET /api/ai/proxy-tools`
 - `POST /api/ai/migrate-legacy-settings`
 - `POST /api/ai/retry-migration`
@@ -117,6 +120,7 @@ Registered MCP tools:
 - Browser `app-settings` migrates through a dedicated backend endpoint only when no backend profile exists; its local copy is removed after success.
 - Fresh databases and empty-key Gemini defaults have no active provider. Manual idea management remains available during setup.
 - Settings v2 is `{version: 2, activeConnectionId: string | null}`. New or edited connections must pass a test at their current revision before activation. Backups import metadata as new inactive profiles without changing an existing active selection.
+- OpenAI/ChatGPT sign-in is available for the CLI-proxy Codex connection. The app delegates to the installed `codex` CLI (`codex login --device-auth`, `codex login status`, and `codex logout`) and never imports session credentials. Direct OpenAI API connections still use an API key.
 
 ## Dev Commands
 - `npm run dev`: backend + companion proxy + Vite

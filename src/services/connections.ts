@@ -1,6 +1,7 @@
 import type { AiConnection, AiConnectionStatus, AppSettings } from '../types';
 
 export type AiStatus = AiConnectionStatus;
+export type OpenAiAuthStatus = { state: 'authenticated' | 'signed_out' | 'pending' | 'unavailable'; message: string; authorizationUrl?: string };
 
 export interface ProxyTools {
     defaultTool: string | null;
@@ -47,6 +48,9 @@ export const connectionsService = {
     removeCredential: (id: string) => request<void>(`${connectionPath(id)}/credential`, 'DELETE'),
     test: (id: string) => request<{ ok?: boolean; state?: string; message?: string; success?: boolean }>(`${connectionPath(id)}/test`, 'POST'),
     status: () => request<AiStatus>('/ai/status'),
+    openAiAuthStatus: () => request<OpenAiAuthStatus>('/ai/openai-auth'),
+    startOpenAiAuth: () => request<OpenAiAuthStatus>('/ai/openai-auth/start', 'POST'),
+    logoutOpenAiAuth: () => request<OpenAiAuthStatus>('/ai/openai-auth/logout', 'POST'),
     retryMigration: () => request<void>('/ai/retry-migration', 'POST'),
     models: (id: string) => request<{ supported: boolean; models: string[] }>(`${connectionPath(id)}/models`),
     proxyTools: () => request<ProxyTools>('/ai/proxy-tools'),

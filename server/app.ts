@@ -14,6 +14,7 @@ import type { ConnectionService } from './connections/ConnectionService.js';
 import { activeConnectionSchema, connectionInputSchema, credentialWriteSchema } from './connections/contracts.js';
 import { legacyAppSettingsSchema } from './contracts.js';
 import { migrateSettings } from './ai/migrateSettings.js';
+import { OpenAiAuthService } from './openaiAuth.js';
 import { importBackup } from './connections/importBackup.js';
 import { computeIdeaEventDiff } from './ideaHistory.js';
 import type { AppStore } from './store.js';
@@ -118,7 +119,7 @@ function sendStream(
     });
 }
 
-export function createHttpApp(store: AppStore, aiService: BackendAiService, connections?: ConnectionService) {
+export function createHttpApp(store: AppStore, aiService: BackendAiService, connections?: ConnectionService, openAiAuth = new OpenAiAuthService()) {
   const app = express();
   const connectionService = () => {
     if (!connections) throw new AiConnectionError('AI_SETUP_REQUIRED', 'AI connections are not initialized.');
@@ -355,6 +356,9 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService, conn
   app.delete('/api/ai/connections/:id/credential', async (req, res, next) => { try { await connectionService().deleteCredential(req.params.id); res.status(204).end(); } catch (error) { next(error); } });
   app.post('/api/ai/connections/:id/test', async (req, res, next) => { try { res.json(await connectionService().test(req.params.id)); } catch (error) { next(error); } });
   app.get('/api/ai/status', async (_req, res, next) => { try { res.json(await connectionService().status()); } catch (error) { next(error); } });
+  app.get('/api/ai/openai-auth', async (_req, res, next) => { try { res.json(await openAiAuth.status()); } catch (error) { next(error); } });
+  app.post('/api/ai/openai-auth/start', async (_req, res, next) => { try { res.json(await openAiAuth.start()); } catch (error) { next(error); } });
+  app.post('/api/ai/openai-auth/logout', async (_req, res, next) => { try { res.json(await openAiAuth.logout()); } catch (error) { next(error); } });
   app.get('/api/ai/proxy-tools', async (_req, res, next) => { try { res.json(await connectionService().proxyTools()); } catch (error) { next(error); } });
   app.get('/api/ai/connections/:id/models', async (req, res, next) => { try { res.json(await connectionService().models(req.params.id)); } catch (error) { next(error); } });
   app.post('/api/ai/retry-migration', async (_req, res, next) => {

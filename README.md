@@ -75,6 +75,7 @@ On first run, choose **Set up AI** or continue capturing ideas without AI. There
 - Direct APIs: OpenAI Responses, Anthropic/Claude Messages, Google Gemini, and OpenAI-compatible services. Enter the exact model ID, or load the provider's model list after saving a credential. Compatible APIs use a base URL such as `https://api.example.com/v1`.
 - Ollama: configure its endpoint and model. HTTP is permitted for loopback services; remote endpoints require HTTPS.
 - CLI through proxy: select Codex, Claude Code, Cursor, Kiro, Gemini, or OpenCode from the companion proxy. `npm run dev` starts that proxy. Install and sign in through the official CLI; manage CLI API keys in the proxy. Subscription login tokens are never entered into this app.
+- OpenAI sign-in: select the Codex CLI connection and use **Sign in with OpenAI** in Settings. The official `codex login --device-auth` flow owns its credentials; this app only checks `codex login status` and never imports session tokens. Direct OpenAI and arbitrary OpenAI-compatible API connections still require an explicit model ID.
 
 API keys are stored in **macOS Keychain**, using native bindings. SQLite stores connection metadata and credential references; the browser only receives `hasKey`. The backend and stdio MCP share the database's active connection. Keychain access must be allowed for the Node process; other operating systems do not currently support storing API credentials in this app.
 

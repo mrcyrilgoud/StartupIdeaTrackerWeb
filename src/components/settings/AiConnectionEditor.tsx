@@ -32,6 +32,8 @@ export function AiConnectionEditor({ initialMode = 'closed' }: { initialMode?: E
     const [tools, setTools] = useState<ProxyTools | null>(null);
     const [toolsError, setToolsError] = useState('');
     const [toolsLoading, setToolsLoading] = useState(false);
+    const [openAiAuth, setOpenAiAuth] = useState<Awaited<ReturnType<typeof connectionsService.openAiAuthStatus>> | null>(null);
+    const [openAiAuthLoading, setOpenAiAuthLoading] = useState(false);
     const [editorMode, setEditorMode] = useState<EditorMode>(initialMode);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [draftBaseline, setDraftBaseline] = useState('');
@@ -79,6 +81,13 @@ export function AiConnectionEditor({ initialMode = 'closed' }: { initialMode?: E
         }
     }
 
+    async function runOpenAiAuth(action: () => Promise<Awaited<ReturnType<typeof connectionsService.openAiAuthStatus>>>) {
+        setOpenAiAuthLoading(true);
+        try { setOpenAiAuth(await action()); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : 'OpenAI sign-in failed'); }
+        finally { setOpenAiAuthLoading(false); }
+    }
+
     useEffect(() => {
         mountedRef.current = true;
         let cancelled = false;
@@ -94,6 +103,18 @@ export function AiConnectionEditor({ initialMode = 'closed' }: { initialMode?: E
         void loadProxyTools();
         return () => { cancelled = true; mountedRef.current = false; };
     }, []);
+
+    useEffect(() => {
+        if (kind !== 'cli_proxy' || tool !== 'codex') {
+            setOpenAiAuth(null);
+            return;
+        }
+        let cancelled = false;
+        void connectionsService.openAiAuthStatus()
+            .then(next => { if (!cancelled) setOpenAiAuth(next); })
+            .catch(() => { if (!cancelled) setOpenAiAuth(null); });
+        return () => { cancelled = true; };
+    }, [kind, tool]);
 
     useEffect(() => {
         if (editorMode === 'closed' || busy || !settings) return;
@@ -290,6 +311,7 @@ export function AiConnectionEditor({ initialMode = 'closed' }: { initialMode?: E
                             <input className="input mt-1" type="password" autoComplete="new-password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Enter a new key" />
                         </label>
                         <p className="text-sm text-text-secondary">API keys are stored securely in macOS Keychain by the backend and never displayed here. Allow Keychain access if macOS prompts you.</p>
+                        {provider === 'openai' && <p className="text-sm text-text-secondary">Using ChatGPT/Codex sign-in? Choose <span className="font-medium">Local CLI proxy → Codex</span> instead; direct OpenAI API connections require an API key.</p>}
                     </>}
                     {editingId && selected?.kind === 'api' && selected.hasKey && <button type="button" className="text-red-600 dark:text-red-400 text-left" disabled={busy} onClick={() => {
                         if (!window.confirm('Remove the stored API key for this connection?')) return;
@@ -313,6 +335,17 @@ export function AiConnectionEditor({ initialMode = 'closed' }: { initialMode?: E
                         <p>{toolDetail.available === true ? 'Tool available' : toolDetail.available === false ? 'Tool unavailable' : 'Tool availability unknown'} · Authentication: {toolDetail.authenticationStatus}</p>
                         <p className="whitespace-pre-wrap mt-2">{toolDetail.authenticationInstructions}</p>
                         <p className="mt-2">Images: {toolDetail.capabilities.image ? 'supported' : 'unsupported'} · Streaming: {toolDetail.capabilities.streaming ? 'supported' : 'unsupported'}</p>
+                    </div>}
+                    {tool === 'codex' && <div className="border border-border rounded-lg p-3 flex flex-col gap-2">
+                        <p className="font-medium">OpenAI sign-in</p>
+                        <p role="status" className="text-sm text-text-secondary">{openAiAuth?.message ?? 'Check whether the official Codex CLI is signed in.'}</p>
+                        {openAiAuth?.authorizationUrl && <a className="text-accent break-all" href={openAiAuth.authorizationUrl} target="_blank" rel="noreferrer">Open sign-in page</a>}
+                        <div className="flex flex-wrap gap-2">
+                            <button type="button" className="btn-secondary" disabled={busy || openAiAuthLoading} onClick={() => void runOpenAiAuth(connectionsService.startOpenAiAuth)}>{openAiAuthLoading ? 'Starting…' : 'Sign in with OpenAI'}</button>
+                            <button type="button" className="text-sm text-accent" disabled={busy || openAiAuthLoading} onClick={() => void runOpenAiAuth(connectionsService.openAiAuthStatus)}>Check status</button>
+                            {openAiAuth?.state === 'authenticated' && <button type="button" className="text-sm text-red-600 dark:text-red-400" disabled={busy || openAiAuthLoading} onClick={() => void runOpenAiAuth(connectionsService.logoutOpenAiAuth)}>Sign out</button>}
+                        </div>
+                        <p className="text-xs text-text-secondary">The official Codex CLI stores its own sign-in credentials. This app never imports or displays them.</p>
                     </div>}
                     {toolDetail?.capabilities.model && <label className="block">Model (optional)<input className="input mt-1" value={model} onChange={event => setModel(event.target.value)} placeholder="Leave blank to use the authenticated tool's default" /></label>}
                 </>}

@@ -71,6 +71,24 @@ try {
   start('vite', process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'], { VITE_BACKEND_TARGET: backend });
   await poll(async () => (await fetch(origin)).ok, 'Vite readiness');
   browser = await chromium.launch({ headless: true }); context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, acceptDownloads: true }); page = await context.newPage(); page.setDefaultTimeout(15000);
+  let openAiAuthState = 'signed_out';
+  await page.route('**/api/ai/openai-auth**', async route => {
+    if (route.request().method() === 'POST') {
+      if (route.request().url().endsWith('/start')) openAiAuthState = 'pending';
+      if (route.request().url().endsWith('/logout')) openAiAuthState = 'signed_out';
+    }
+    if (route.request().url().endsWith('/start') && openAiAuthState === 'signed_out') openAiAuthState = 'pending';
+    if (route.request().url().endsWith('/start') && openAiAuthState === 'pending') {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ state: 'pending', message: 'Complete OpenAI sign-in in the browser opened by Codex.' }) });
+      return;
+    }
+    if (route.request().url().endsWith('/logout')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ state: 'signed_out', message: 'Signed out of OpenAI in Codex.' }) });
+      return;
+    }
+    const state = openAiAuthState === 'pending' ? 'authenticated' : openAiAuthState;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ state, message: state === 'authenticated' ? 'Signed in with OpenAI through Codex.' : 'OpenAI is not signed in. Start sign-in to use the authenticated Codex connection.' }) });
+  });
   await page.route('**/api/ai/proxy-tools', async route => {
     if (failProxyTools) {
       await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'E2E proxy unavailable' }) });
@@ -106,6 +124,10 @@ try {
     await page.reload(); const row = await connectionRow(); await row.getByRole('button', { name: 'Edit', exact: true }).click();
     await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); await visible(page.getByText('Provider and connection type are locked after creation. To change either, create a new connection.', { exact: true }));
     assert.equal(await page.locator('label').filter({ hasText: /^Connection type/ }).locator('select').isDisabled(), true); assert.equal(await page.locator('label').filter({ hasText: /^Provider/ }).locator('select').count(), 0);
+    await visible(page.getByText('OpenAI sign-in', { exact: true })); await visible(page.getByText('OpenAI is not signed in. Start sign-in to use the authenticated Codex connection.', { exact: true }));
+    await button('Sign in with OpenAI').click(); await visible(page.getByText('Complete OpenAI sign-in in the browser opened by Codex.', { exact: true }));
+    await button('Check status').click(); await visible(page.getByText('Signed in with OpenAI through Codex.', { exact: true }));
+    await button('Sign out').click(); await visible(page.getByText('Signed out of OpenAI in Codex.', { exact: true }));
     await page.getByLabel('Model (optional)').fill('e2e-cli-model'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/)); await testAndActivate(row);
     await button('Cancel').click(); await gone(page.getByRole('heading', { name: 'Edit connection', exact: true }));
   });
