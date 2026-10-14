@@ -3,10 +3,10 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { StructuredParseError, type BackendAiService } from './ai.js';
-import { MAX_HISTORY_SUMMARY_EVENTS, brainstormSchema, diffIdeaEventInputSchema, generateIdeasSchema, ideaChatSchema, ideaEventDiffSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, importDataSchema, listIdeaEventsInputSchema, saveIdeaRequestSchema, suggestFoldersSchema, summarizeChatSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
+import { MAX_HISTORY_SUMMARY_EVENTS, brainstormSchema, diffIdeaEventInputSchema, generateIdeasSchema, ideaChatSchema, ideaEventDiffSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, ideaSummaryQuerySchema, importDataSchema, listIdeaEventsInputSchema, saveIdeaRequestSchema, suggestFoldersSchema, summarizeChatSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
 import { createIdeaMcpServer } from './mcp.js';
 import { getAllowedOrigins, SERVER_HOST } from './config.js';
-import { NotFoundError } from './errors.js';
+import { BadRequestError, NotFoundError } from './errors.js';
 import { AiConnectionError } from './errors.js';
 import { CredentialStoreError } from './credentials/CredentialStore.js';
 import { AiProviderError } from './ai/providers/errors.js';
@@ -178,6 +178,15 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService, conn
       const query = parseBody(ideaListQuerySchema, req.query);
       const ideas = await store.listIdeas(query);
       res.json(ideas);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/idea-summaries', async (req, res, next) => {
+    try {
+      const query = parseBody(ideaSummaryQuerySchema, req.query);
+      res.json(await store.listIdeaSummaries(query));
     } catch (error) {
       next(error);
     }
@@ -630,6 +639,10 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService, conn
     }
     if (error instanceof NotFoundError) {
       res.status(404).json({ error: message });
+      return;
+    }
+    if (error instanceof BadRequestError) {
+      res.status(400).json({ error: message });
       return;
     }
     if (error instanceof AiConnectionError || error instanceof CredentialStoreError || error instanceof AiProviderError) {

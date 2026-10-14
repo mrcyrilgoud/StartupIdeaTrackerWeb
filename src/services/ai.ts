@@ -188,21 +188,21 @@ export const aiService = {
     return response.ideas;
   },
 
-  async findSimplestMVP(ideas: Idea[]): Promise<MVPAnalysisResult[]> {
+  async findSimplestMVP(ideas: Array<Pick<Idea, 'id'>>): Promise<MVPAnalysisResult[]> {
     const response = await request<{ results: MVPAnalysisResult[] }>('/ai/find-mvp', {
       ideaIds: ideas.map((idea) => idea.id)
     });
     return response.results;
   },
 
-  async suggestFolders(ideas: Idea[], _currentFolders: Array<{ name: string }>): Promise<FolderSuggestion[]> {
+  async suggestFolders(ideas: Array<Pick<Idea, 'id'>>, _currentFolders: Array<{ name: string }>): Promise<FolderSuggestion[]> {
     const response = await request<{ suggestions: FolderSuggestion[] }>('/ai/suggest-folders', {
       ideaIds: ideas.map((idea) => idea.id)
     });
     return response.suggestions;
   },
 
-  async vetIdeas(ideas: Idea[], criteria: VettingCriteria): Promise<VettingResult[]> {
+  async vetIdeas(ideas: Array<Pick<Idea, 'id'>>, criteria: VettingCriteria): Promise<VettingResult[]> {
     const response = await request<{ results: VettingResult[] }>('/ai/vet', {
       criteria,
       ideaIds: ideas.map((idea) => idea.id)
@@ -256,7 +256,7 @@ export const aiService = {
     return result.fullText;
   },
 
-  async generateViabilityReport(idea: Idea): Promise<string> {
+  async generateViabilityReport(idea: Pick<Idea, 'id'>): Promise<string> {
     const response = await request<{ report: string }>('/ai/viability-report', {
       ideaId: idea.id
     });
@@ -275,7 +275,7 @@ export const aiService = {
     return result.fullText;
   },
 
-  async analyzeCompetitors(idea: Idea): Promise<string> {
+  async analyzeCompetitors(idea: Pick<Idea, 'id'>): Promise<string> {
     const response = await request<{ report: string }>('/ai/competitor-analysis', {
       ideaId: idea.id
     });

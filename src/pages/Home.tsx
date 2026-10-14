@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu, AlertTriangle } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, isStructuredParseError, MVPAnalysisResult } from '../services/ai';
-import { Idea, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder, VettingResult, VettingCriteria } from '../types';
+import { Idea, IdeaSummary, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder, VettingResult, VettingCriteria } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { MVPResultModal } from '../components/MVPResultModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
@@ -18,7 +18,11 @@ import { ConfirmModal } from '../components/ConfirmModal';
 export const Home: React.FC = () => {
     const { ready } = useAiConnection();
     const [aiError, setAiError] = useState<string | null>(null);
-    const [ideas, setIdeas] = useState<Idea[]>([]);
+    const [ideas, setIdeas] = useState<IdeaSummary[]>([]);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [ideasLoading, setIdeasLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const loadRequestIdRef = React.useRef(0);
     const [folders, setFolders] = useState<Folder[]>([]);
     const [selectedFolderId, setSelectedFolderId] = useState<string>('all');
     const [creatingIdea, setCreatingIdea] = useState(false);
@@ -45,11 +49,11 @@ export const Home: React.FC = () => {
 
     // Delete confirmation state
     const [showDeleteModal, setShowDeleteModal] = useState(false);
-    const [ideaToDelete, setIdeaToDelete] = useState<Idea | null>(null);
+    const [ideaToDelete, setIdeaToDelete] = useState<IdeaSummary | null>(null);
 
     // Move Idea state
     const [showMoveModal, setShowMoveModal] = useState(false);
-    const [ideaToMove, setIdeaToMove] = useState<Idea | null>(null);
+    const [ideaToMove, setIdeaToMove] = useState<IdeaSummary | null>(null);
 
     // Smart Organize state
     const [showSmartOrganizeModal, setShowSmartOrganizeModal] = useState(false);
@@ -70,29 +74,43 @@ export const Home: React.FC = () => {
 
     const navigate = useNavigate();
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    const loadData = async () => {
+    const loadData = async (cursor?: string) => {
+        const requestId = ++loadRequestIdRef.current;
         try {
             setError(null);
-            const [loadedIdeas, loadedFolders] = await Promise.all([
-                dbService.getAllIdeas(),
-                dbService.getAllFolders()
+            if (cursor) setLoadingMore(true);
+            else setIdeasLoading(true);
+            const [summaryPage, loadedFolders] = await Promise.all([
+                dbService.getIdeaSummaries({
+                    query: searchQuery,
+                    status: statusFilter,
+                    folderId: selectedFolderId,
+                    limit: 50,
+                    cursor
+                }),
+                cursor ? Promise.resolve(folders) : dbService.getAllFolders()
             ]);
-
-            // Ensure status exists for backward compatibility
-            const cleanedIdeas = loadedIdeas.map(i => ({
-                ...i,
-                status: i.status || 'draft'
-            }));
-
-            setIdeas(cleanedIdeas);
-            setFolders(loadedFolders);
+            if (requestId !== loadRequestIdRef.current) return;
+            setIdeas(prev => cursor ? [...prev, ...summaryPage.items] : summaryPage.items);
+            setNextCursor(summaryPage.nextCursor);
+            if (!cursor) setFolders(loadedFolders);
         } catch (e) {
             setError("Could not connect to the database. Make sure 'npm run dev' is running.");
+        } finally {
+            if (requestId === loadRequestIdRef.current) {
+                setIdeasLoading(false);
+                setLoadingMore(false);
+            }
         }
+    };
+
+    useEffect(() => {
+        void loadData();
+    }, [searchQuery, statusFilter, selectedFolderId]);
+
+    const loadMoreIdeas = () => {
+        if (!nextCursor || loadingMore) return;
+        void loadData(nextCursor);
     };
 
     const handleCreateFolder = async (name: string) => {
@@ -127,8 +145,7 @@ export const Home: React.FC = () => {
 
                 // Update the backend to persist the 'unassigned' state
                 Promise.all(orphanedIdeas.map(idea => {
-                    const updated = { ...idea, folder_id: undefined };
-                    return dbService.saveIdea(updated);
+                    return dbService.updateIdea(idea.id, { folder_id: null });
                 })).catch(err => console.error("Failed to unset folder_id for orphaned ideas:", err));
             }
         } catch (e) {
@@ -162,7 +179,7 @@ export const Home: React.FC = () => {
         }
     };
 
-    const handleAnalyzeViability = async (e: React.MouseEvent, idea: Idea) => {
+    const handleAnalyzeViability = async (e: React.MouseEvent, idea: IdeaSummary) => {
         e.preventDefault(); // Prevent navigation to detail page
         e.stopPropagation();
         if (!ready) return;
@@ -217,7 +234,7 @@ export const Home: React.FC = () => {
         }
     };
 
-    const handleDeleteIdea = (e: React.MouseEvent, idea: Idea) => {
+    const handleDeleteIdea = (e: React.MouseEvent, idea: IdeaSummary) => {
         e.preventDefault();
         e.stopPropagation();
         setIdeaToDelete(idea);
@@ -239,7 +256,7 @@ export const Home: React.FC = () => {
         }
     };
 
-    const handleMoveStart = (e: React.MouseEvent, idea: Idea) => {
+    const handleMoveStart = (e: React.MouseEvent, idea: IdeaSummary) => {
         e.preventDefault();
         e.stopPropagation();
         setIdeaToMove(idea);
@@ -251,7 +268,7 @@ export const Home: React.FC = () => {
 
         try {
             const updatedIdea = { ...ideaToMove, folder_id };
-            await dbService.saveIdea(updatedIdea);
+            await dbService.updateIdea(ideaToMove.id, { folder_id: folder_id ?? null });
 
             // Update local state
             setIdeas(prev => prev.map(i => i.id === ideaToMove.id ? updatedIdea : i));
@@ -264,7 +281,7 @@ export const Home: React.FC = () => {
         }
     };
 
-    const handleDragStart = (e: React.DragEvent, idea: Idea) => {
+    const handleDragStart = (e: React.DragEvent, idea: IdeaSummary) => {
         e.dataTransfer.setData('ideaId', idea.id);
         e.dataTransfer.effectAllowed = 'move';
         // Add a visual drag image if needed, or let browser handle it
@@ -284,7 +301,7 @@ export const Home: React.FC = () => {
         setIdeas(prev => prev.map(i => i.id === ideaId ? updatedIdea : i));
 
         // Async DB Update
-        dbService.saveIdea(updatedIdea).catch(e => {
+        dbService.updateIdea(ideaId, { folder_id: targetFolderId ?? null }).catch(e => {
             console.error('Failed to move idea via drag and drop:', e);
             alert('Failed to move idea, reverting changes...');
             // Revert
@@ -408,7 +425,7 @@ export const Home: React.FC = () => {
                     if (ideaIndex !== -1) {
                         const updatedIdea = { ...updatedIdeas[ideaIndex], folder_id };
                         updatedIdeas[ideaIndex] = updatedIdea;
-                        updatePromises.push(dbService.saveIdea(updatedIdea));
+                        updatePromises.push(dbService.updateIdea(ideaId, { folder_id }));
                     }
                 }
             }
@@ -463,21 +480,11 @@ export const Home: React.FC = () => {
                 // Check if we need to update:
                 // 1. If it's a new result (timestamp is strictly newer than what we have)
                 // 2. OR if we don't have it at all
-                const currentVetting = ideaToUpdate.vetting?.[criteria];
-                if (!currentVetting || result.timestamp > currentVetting.timestamp) {
-                    const updatedIdea = {
-                        ...ideaToUpdate,
-                        vetting: {
-                            ...ideaToUpdate.vetting,
-                            [criteria]: result
-                        }
-                    };
-                    await dbService.saveIdea(updatedIdea);
-                    return updatedIdea;
-                }
+                await dbService.updateIdea(ideaToUpdate.id, { vettingMerge: [result] });
+                return ideaToUpdate;
             });
 
-            const updatedIdeas = (await Promise.all(updates)).filter(Boolean) as Idea[];
+            const updatedIdeas = (await Promise.all(updates)).filter(Boolean) as IdeaSummary[];
 
             if (updatedIdeas.length > 0) {
                 setIdeas(prev => prev.map(idea => {
@@ -542,7 +549,7 @@ export const Home: React.FC = () => {
 
     const groupedIdeasByFolder = useMemo(() => {
         if (selectedFolderId !== 'all') return null;
-        const groupedIdeas: Record<string, Idea[]> = {};
+        const groupedIdeas: Record<string, IdeaSummary[]> = {};
         filteredIdeas.forEach((idea) => {
             const folderId = (idea.folder_id && validFolderIds.has(idea.folder_id)) ? idea.folder_id : 'uncategorized';
             if (!groupedIdeas[folderId]) groupedIdeas[folderId] = [];
@@ -691,7 +698,9 @@ export const Home: React.FC = () => {
                         </div>
                     )}
 
-                    {filteredIdeas.length === 0 && !error ? (
+                    {ideasLoading ? (
+                        <div className="text-center p-16 text-text-secondary">Loading ideas...</div>
+                    ) : filteredIdeas.length === 0 && !error ? (
                         <div className="text-center p-16 border-2 border-dashed border-border rounded-3xl bg-surface/50">
                             <div className="w-16 h-16 bg-accent/10 text-accent rounded-2xl flex items-center justify-center mx-auto mb-4">
                                 <Plus size={32} />
@@ -713,7 +722,7 @@ export const Home: React.FC = () => {
                     ) : (
                         <>
                             {(() => {
-                                const renderIdeaCard = (idea: Idea) => (
+                                const renderIdeaCard = (idea: IdeaSummary) => (
                                     <div
                                         key={idea.id}
                                         draggable={true}
@@ -864,6 +873,14 @@ export const Home: React.FC = () => {
                                 );
                             })()}
                         </>
+                    )}
+
+                    {!ideasLoading && nextCursor && (
+                        <div className="flex justify-center mt-8">
+                            <button className="btn-primary" onClick={loadMoreIdeas} disabled={loadingMore}>
+                                {loadingMore ? 'Loading more...' : 'Load more ideas'}
+                            </button>
+                        </div>
                     )}
 
                     <MVPResultModal

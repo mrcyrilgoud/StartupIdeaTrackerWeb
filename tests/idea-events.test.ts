@@ -75,6 +75,61 @@ test('idea event snapshots survive after the live idea row is deleted', async ()
   assert.equal(persistedEvent.ideaId, 'idea-1');
 });
 
+test('idea summaries paginate without hydrating chat, related ideas, or vetting data', async () => {
+  const store = createStore();
+  await store.saveIdea(makeIdea({
+    id: 'idea-1',
+    title: 'First',
+    details: 'First details',
+    keywords: ['alpha'],
+    chatHistory: [{ id: 'message-1', role: 'user', content: 'Long history', timestamp: 1 }],
+    relatedIdeas: ['idea-2'],
+    vetting: { realism: { ideaId: 'idea-1', criteria: 'realism', score: 8, reason: 'Good', timestamp: 1 } }
+  }));
+  await store.saveIdea(makeIdea({ id: 'idea-2', title: 'Second' }));
+  await store.saveIdea(makeIdea({ id: 'idea-3', title: 'Third' }));
+
+  const firstPage = await store.listIdeaSummaries({ limit: 2 });
+  assert.equal(firstPage.items.length, 2);
+  assert.ok(firstPage.nextCursor);
+  assert.deepEqual(firstPage.items[0], {
+    id: 'idea-3',
+    title: 'Third',
+    details: 'Original details',
+    timestamp: 1,
+    keywords: [],
+    status: 'draft'
+  });
+  assert.equal('chatHistory' in firstPage.items[0], false);
+  assert.equal('relatedIdeas' in firstPage.items[0], false);
+  assert.equal('vetting' in firstPage.items[0], false);
+
+  const secondPage = await store.listIdeaSummaries({ limit: 2, cursor: firstPage.nextCursor ?? undefined });
+  assert.deepEqual(secondPage.items.map((idea) => idea.id), ['idea-1']);
+  assert.equal(secondPage.nextCursor, null);
+});
+
+test('idea summary endpoint validates cursors and applies filters', async () => {
+  const store = createStore();
+  await store.saveIdea(makeIdea({ id: 'idea-a', title: 'Alpha', status: 'mvp', folder_id: 'folder-1' }));
+  await store.saveIdea(makeIdea({ id: 'idea-b', title: 'Beta', status: 'draft', folder_id: 'folder-2' }));
+  const app = createHttpApp(store, {} as never);
+
+  await withHttpApp(app, async (baseUrl) => {
+    const filteredResponse = await fetch(`${baseUrl}/api/idea-summaries?status=mvp&folderId=folder-1&query=alp`);
+    assert.equal(filteredResponse.status, 200);
+    const filtered = await filteredResponse.json() as { items: Array<{ id: string }>; nextCursor: string | null };
+    assert.deepEqual(filtered.items.map((idea) => idea.id), ['idea-a']);
+    assert.equal(filtered.nextCursor, null);
+
+    const invalidCursorResponse = await fetch(`${baseUrl}/api/idea-summaries?cursor=not-a-valid-cursor`);
+    assert.equal(invalidCursorResponse.status, 400);
+
+    const invalidLimitResponse = await fetch(`${baseUrl}/api/idea-summaries?limit=101`);
+    assert.equal(invalidLimitResponse.status, 400);
+  });
+});
+
 test('brainstorm-created ideas record both creation and brainstorm-summary events', async () => {
   const store = createStore();
 

@@ -1,4 +1,4 @@
-import { type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventDiff, type IdeaEventType } from '../types';
+import { type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventDiff, type IdeaEventType, type IdeaSummary } from '../types';
 
 const API_BASE_URL = '/api';
 const pendingIdeaSaveChains = new Map<string, Promise<unknown>>();
@@ -51,6 +51,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const dbService = {
+  async getIdeaSummaries(options: { query?: string; status?: string; folderId?: string; limit?: number; cursor?: string } = {}): Promise<{ items: IdeaSummary[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (options.query) params.set('query', options.query);
+    if (options.status && options.status !== 'all') params.set('status', options.status);
+    if (options.folderId && options.folderId !== 'all') params.set('folderId', options.folderId);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.cursor) params.set('cursor', options.cursor);
+    const suffix = params.size > 0 ? `?${params.toString()}` : '';
+    return request<{ items: IdeaSummary[]; nextCursor: string | null }>(`/idea-summaries${suffix}`);
+  },
+
   async getAllIdeas(): Promise<Idea[]> {
     return request<Idea[]>('/ideas');
   },
@@ -101,6 +112,13 @@ export const dbService = {
   async deleteIdea(id: string): Promise<void> {
     await request<void>(`/ideas/${id}`, {
       method: 'DELETE'
+    });
+  },
+
+  async updateIdea(id: string, patch: Record<string, unknown>): Promise<Idea> {
+    return request<Idea>(`/ideas/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
     });
   },
 

@@ -151,6 +151,14 @@ export const ideaListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional()
 });
 
+export const ideaSummaryQuerySchema = z.object({
+  query: z.string().optional(),
+  status: statusSchema.optional(),
+  folderId: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().optional()
+});
+
 export const importDataSchema = z.object({
   version: z.number().optional(),
   timestamp: z.number().optional(),
@@ -218,4 +226,5 @@ export const fetchToolSchema = z.object({
 });
 
 export type IdeaListQuery = z.infer<typeof ideaListQuerySchema>;
+export type IdeaSummaryQuery = z.infer<typeof ideaSummaryQuerySchema>;
 export type UpdateIdeaInput = z.infer<typeof updateIdeaSchema>;

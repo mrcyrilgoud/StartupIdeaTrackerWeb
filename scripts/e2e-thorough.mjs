@@ -146,6 +146,43 @@ try {
     await scenario('provider-failure-and-recovery', async () => {
       await goto('/generate'); await enabled(button('Generate with AI')); expectedFailure = true; proxy.state.failNext = true; const failed = page.waitForResponse(response => response.url().endsWith('/api/ai/generate-ideas') && response.status() === 502); await button('Generate with AI').click(); await failed; await visible(page.getByText(/Error:.*provider/i)); await enabled(button('Generate with AI')); await button('Generate with AI').click(); await visible(page.getByRole('heading', { name: 'E2E Generated Alpha', exact: true })); expectedFailure = false;
     });
+    await scenario('home-summary-pagination-and-detail-navigation', async () => {
+      for (let index = 0; index < 51; index += 1) {
+        await api('/api/ideas', 'POST', {
+          id: `pagination-${index}`,
+          title: `Pagination ${index}`,
+          details: `Pagination test idea ${index}`,
+          timestamp: Date.now() + index,
+          keywords: ['pagination'],
+          chatHistory: [],
+          relatedIdeas: [],
+          status: 'draft'
+        });
+      }
+
+      await goto('/');
+      const paginationHeadings = page.getByRole('heading', { name: /^Pagination / });
+      await visible(page.getByRole('heading', { name: 'Pagination 50', exact: true }));
+      await visible(button('Load more ideas'));
+      assert.equal(await paginationHeadings.count(), 50);
+      const loadMoreResponse = page.waitForResponse(response => response.url().includes('/api/idea-summaries') && response.url().includes('cursor='));
+      await button('Load more ideas').click();
+      const loadMorePayload = await (await loadMoreResponse).json();
+      assert.ok(loadMorePayload.items.some((idea) => idea.title === 'Pagination 0'));
+      await poll(async () => (await paginationHeadings.count()) >= 51, 'summary page appended');
+      assert.ok((await paginationHeadings.count()) >= 51);
+
+      const search = page.getByPlaceholder('Search ideas...');
+      await search.fill('Pagination 50');
+      await visible(page.getByRole('heading', { name: 'Pagination 50', exact: true }));
+      assert.equal(await paginationHeadings.count(), 1);
+      await search.fill('');
+      await visible(button('Load more ideas'));
+
+      await page.getByRole('heading', { name: 'Pagination 50', exact: true }).click();
+      await page.waitForURL(/\/idea\/pagination-50$/);
+      assert.equal(await page.getByPlaceholder('Idea Title').inputValue(), 'Pagination 50');
+    });
   }
   assert.deepEqual(proxy.state.errors, [], 'mock contract errors'); assert.deepEqual(unexpected, [], 'unexpected browser errors'); assert.deepEqual(credentialRequests, [], 'no native Keychain credential requests'); console.log(`${results.length}/${results.length} scenarios passed; artifacts: ${output}`);
 } catch (error) { process.exitCode = 1; console.error(error.stack); if (page) await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); }

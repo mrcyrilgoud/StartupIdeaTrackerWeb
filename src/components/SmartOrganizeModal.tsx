@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, FolderPlus, Check, X } from 'lucide-react';
 import { FolderSuggestion } from '../services/ai';
-import { Idea } from '../types';
+import { IdeaSummary } from '../types';
 import { StructuredAiFallback } from './StructuredAiFallback';
 
 interface SmartOrganizeModalProps {
@@ -11,7 +11,7 @@ interface SmartOrganizeModalProps {
     loading: boolean;
     onClose: () => void;
     onApply: (selectedFolders: FolderSuggestion[]) => void;
-    ideas: Idea[];
+    ideas: IdeaSummary[];
 }
 
 export const SmartOrganizeModal: React.FC<SmartOrganizeModalProps> = ({

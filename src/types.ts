@@ -35,6 +35,16 @@ export interface Idea {
   vetting?: Partial<Record<VettingCriteria, VettingResult>>;
 }
 
+export interface IdeaSummary {
+  id: string;
+  title: string;
+  details: string;
+  timestamp: number;
+  keywords: string[];
+  status: Idea['status'];
+  folder_id?: string;
+}
+
 export type IdeaEventType =
   | 'idea_created'
   | 'idea_updated'

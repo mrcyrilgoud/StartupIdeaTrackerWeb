@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, ArrowRight, X } from 'lucide-react';
-import { Idea } from '../types';
+import { IdeaSummary } from '../types';
 import { MVPAnalysisResult } from '../services/ai';
 import { StructuredAiFallback } from './StructuredAiFallback';
 
@@ -9,7 +9,7 @@ interface MVPResultModalProps {
     isOpen: boolean;
     results: MVPAnalysisResult[] | null;
     rawOutput?: string | null;
-    ideas: Idea[];
+    ideas: IdeaSummary[];
     onClose: () => void;
 }
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Idea, VettingResult, VettingCriteria } from '../types';
+import { IdeaSummary, VettingResult, VettingCriteria } from '../types';
 import { X, Trash2, AlertTriangle, Lightbulb, Fingerprint, Scale, Zap } from 'lucide-react';
 import { StructuredAiFallback } from './StructuredAiFallback';
 
@@ -8,7 +8,7 @@ interface VettingModalProps {
     loading: boolean;
     results: VettingResult[];
     rawOutput?: string | null;
-    ideas: Idea[];
+    ideas: IdeaSummary[];
     currentCriteria: VettingCriteria | null;
     onClose: () => void;
     onDelete: (ideaId: string) => void;

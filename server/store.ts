@@ -5,10 +5,10 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { appSettingsTable, foldersTable, schema } from './schema.js';
-import { AiConnectionError, NotFoundError } from './errors.js';
-import { DEFAULT_APP_SETTINGS, LEGACY_DEFAULT_APP_SETTINGS, type AppSettings, type LegacyAppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventType, type VettingCriteria, type VettingResult } from '../src/types.js';
+import { AiConnectionError, BadRequestError, NotFoundError } from './errors.js';
+import { DEFAULT_APP_SETTINGS, LEGACY_DEFAULT_APP_SETTINGS, type AppSettings, type LegacyAppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventType, type IdeaSummary, type VettingCriteria, type VettingResult } from '../src/types.js';
 import { connectionInputSchema, type ConnectionInput, type StoredConnection } from './connections/contracts.js';
-import type { IdeaListQuery, UpdateIdeaInput } from './contracts.js';
+import type { IdeaListQuery, IdeaSummaryQuery, UpdateIdeaInput } from './contracts.js';
 
 type SqliteDatabase = Database.Database;
 const LEGACY_JSON_MIGRATION_FLAG = 'legacy_json_migrated';
@@ -22,6 +22,13 @@ type IdeaRow = {
   folder_id: string | null;
   created_at: number;
   updated_at: number;
+};
+
+type IdeaSummaryRow = Pick<IdeaRow, 'id' | 'title' | 'details' | 'status' | 'folder_id' | 'created_at' | 'updated_at'>;
+
+type IdeaSummaryCursor = {
+  updatedAt: number;
+  id: string;
 };
 
 type FolderRow = {
@@ -100,6 +107,22 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function encodeIdeaSummaryCursor(cursor: IdeaSummaryCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeIdeaSummaryCursor(value: string): IdeaSummaryCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<IdeaSummaryCursor>;
+    if (!Number.isSafeInteger(parsed.updatedAt) || typeof parsed.id !== 'string' || parsed.id.length === 0) {
+      throw new Error('invalid cursor shape');
+    }
+    return { updatedAt: parsed.updatedAt as number, id: parsed.id };
+  } catch {
+    throw new BadRequestError('Invalid idea summary cursor');
+  }
+}
+
 export function createSqliteDatabase(databasePath: string): SqliteDatabase {
   ensureDirectory(databasePath);
   const sqlite = new Database(databasePath);
@@ -174,6 +197,9 @@ export function initializeSchema(sqlite: SqliteDatabase): void {
 
     CREATE INDEX IF NOT EXISTS idea_events_idea_id_idx
     ON idea_events (idea_id, id DESC);
+
+    CREATE INDEX IF NOT EXISTS ideas_updated_at_id_idx
+    ON ideas (updated_at DESC, id DESC);
 
     CREATE TABLE IF NOT EXISTS app_settings (
       id TEXT PRIMARY KEY,
@@ -666,6 +692,96 @@ export class AppStore {
 
     const rows = this.sqlite.prepare(sqlText).all(...params) as IdeaRow[];
     return this.hydrateIdeas(rows);
+  }
+
+  async listIdeaSummaries(query: IdeaSummaryQuery): Promise<{ items: IdeaSummary[]; nextCursor: string | null }> {
+    const conditions: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (query.query) {
+      conditions.push(`(
+        LOWER(ideas.title) LIKE ?
+        OR LOWER(ideas.details) LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM idea_keywords keywords
+          WHERE keywords.idea_id = ideas.id AND LOWER(keywords.keyword) LIKE ?
+        )
+      )`);
+      const searchValue = `%${query.query.toLowerCase()}%`;
+      params.push(searchValue, searchValue, searchValue);
+    }
+
+    if (query.status) {
+      conditions.push('ideas.status = ?');
+      params.push(query.status);
+    }
+
+    if (query.folderId) {
+      if (query.folderId === 'uncategorized') {
+        conditions.push(`(
+          ideas.folder_id IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM folders WHERE folders.id = ideas.folder_id
+          )
+        )`);
+      } else {
+        conditions.push('ideas.folder_id = ?');
+        params.push(query.folderId);
+      }
+    }
+
+    if (query.cursor) {
+      const cursor = decodeIdeaSummaryCursor(query.cursor);
+      conditions.push('(ideas.updated_at < ? OR (ideas.updated_at = ? AND ideas.id < ?))');
+      params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+    }
+
+    let sqlText = `
+      SELECT ideas.id, ideas.title, ideas.details, ideas.status, ideas.folder_id, ideas.created_at, ideas.updated_at
+      FROM ideas
+    `;
+
+    if (conditions.length > 0) {
+      sqlText += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    sqlText += ' ORDER BY ideas.updated_at DESC, ideas.id DESC LIMIT ?';
+    params.push(query.limit + 1);
+
+    const rows = this.sqlite.prepare(sqlText).all(...params) as IdeaSummaryRow[];
+    const hasMore = rows.length > query.limit;
+    const pageRows = hasMore ? rows.slice(0, query.limit) : rows;
+    const items = pageRows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      details: row.details,
+      timestamp: row.created_at,
+      keywords: [] as string[],
+      status: row.status,
+      ...(row.folder_id ? { folder_id: row.folder_id } : {})
+    }));
+
+    if (pageRows.length === 0) {
+      return { items, nextCursor: null };
+    }
+
+    const ids = pageRows.map((row) => row.id);
+    const keywords = this.sqlite.prepare(`
+      SELECT idea_id, keyword
+      FROM idea_keywords
+      WHERE idea_id IN (${buildPlaceholders(ids)})
+      ORDER BY rowid
+    `).all(...ids) as KeywordRow[];
+    const itemsById = new Map(items.map((item) => [item.id, item]));
+    for (const keyword of keywords) {
+      itemsById.get(keyword.idea_id)?.keywords.push(keyword.keyword);
+    }
+
+    const lastRow = pageRows[pageRows.length - 1];
+    return {
+      items,
+      nextCursor: hasMore ? encodeIdeaSummaryCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) : null
+    };
   }
 
   async getIdea(id: string): Promise<Idea | undefined> {
