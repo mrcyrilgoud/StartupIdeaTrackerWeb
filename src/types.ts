@@ -93,7 +93,7 @@ export const STATUS_COLORS: Record<IdeaStatus, string> = {
 
 export type LLMProviderType = 'gemini' | 'ollama' | 'cli_proxy';
 
-export interface AppSettings {
+export interface LegacyAppSettings {
   provider: LLMProviderType;
   geminiKey: string;
   ollamaEndpoint: string;
@@ -103,10 +103,30 @@ export interface AppSettings {
 
 export const APP_SETTINGS_STORAGE_KEY = 'app-settings';
 
-export const DEFAULT_APP_SETTINGS: AppSettings = {
+export const LEGACY_DEFAULT_APP_SETTINGS: LegacyAppSettings = {
   provider: 'gemini',
   geminiKey: '',
   ollamaEndpoint: 'http://localhost:11434',
   ollamaModel: 'llama3',
   cliCommandTemplate: 'gemini "{{prompt}}"'
 };
+
+export type ApiProvider = 'openai' | 'anthropic' | 'gemini' | 'openai_compatible' | 'ollama';
+export type AiConnection = {
+  id: string;
+  name: string;
+  revision: number;
+} & ({ kind: 'api'; provider: ApiProvider; model: string; baseUrl?: string; hasKey: boolean }
+  | { kind: 'cli_proxy'; tool: string; model?: string });
+
+export interface AppSettings {
+  version: 2;
+  activeConnectionId: string | null;
+}
+export const DEFAULT_APP_SETTINGS: AppSettings = { version: 2, activeConnectionId: null };
+export interface AiConnectionStatus {
+  state: 'needs_setup' | 'configured' | 'missing_credential' | 'proxy_unavailable' | 'tool_unavailable' | 'authentication_required' | 'credential_store_unavailable';
+  connection: AiConnection | null;
+  capabilities: { image: boolean; streaming: boolean };
+  message?: string;
+}

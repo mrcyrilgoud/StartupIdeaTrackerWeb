@@ -1,9 +1,10 @@
+import { useAiConnection } from '../context/AiConnectionContext';
 import React, { useState, useRef, useEffect } from 'react';
 import { Gamepad2, Brain, ArrowRight, RefreshCw, Sparkles, Timer, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { aiService, isStructuredParseError } from '../services/ai';
 import { dbService } from '../services/db';
-import { AppSettings, Idea } from '../types';
+import { Idea } from '../types';
 import { GeneratedIdeaCard } from '../components/GeneratedIdeaCard';
 import { v4 as uuidv4 } from 'uuid';
 import { StructuredAiFallback } from '../components/StructuredAiFallback';
@@ -107,7 +108,7 @@ export const IdeaSpark: React.FC = () => {
     const [drawingDescription, setDrawingDescription] = useState('');
     const [generatedIdeas, setGeneratedIdeas] = useState<{ title: string, details: string }[]>([]);
     const [rawFallbackOutput, setRawFallbackOutput] = useState<string | null>(null);
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const { ready, status } = useAiConnection();
     const [error, setError] = useState('');
 
     // Timer State
@@ -117,14 +118,6 @@ export const IdeaSpark: React.FC = () => {
     // Canvas Refs
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
-
-    useEffect(() => {
-        const init = async () => {
-            const s = await dbService.getSettings();
-            setSettings(s);
-        };
-        init();
-    }, []);
 
     // Timer Logic
     useEffect(() => {
@@ -210,8 +203,8 @@ export const IdeaSpark: React.FC = () => {
     };
 
     const handleGenerate = async () => {
-        if (!settings) {
-            setError('Settings not loaded yet.');
+        if (!ready || !status?.capabilities.image) {
+            setError(!ready ? 'Set up an AI connection to generate ideas.' : 'The active AI connection does not support image analysis. Choose an image-capable connection in Settings.');
             return;
         }
 
@@ -251,7 +244,7 @@ export const IdeaSpark: React.FC = () => {
                 image = canvasRef.current.toDataURL('image/png').split(',')[1];
             }
 
-            const ideas = await aiService.generateIdeas(prompt, settings, image); // Pass image
+            const ideas = await aiService.generateIdeas(prompt, image); // Pass image
             setGeneratedIdeas(ideas);
             setStage('results');
         } catch (e) {
@@ -260,7 +253,7 @@ export const IdeaSpark: React.FC = () => {
                 setRawFallbackOutput(e.rawOutput);
                 setStage('results');
             } else {
-                setError('Failed to generate ideas. Check your API key.');
+                setError((e as Error).message);
                 setStage('drawing'); // Go back
             }
         }
@@ -415,7 +408,7 @@ export const IdeaSpark: React.FC = () => {
                     </button>
                     <button
                         onClick={handleGenerate}
-                        disabled={!drawingDescription}
+                        disabled={!ready || !status?.capabilities.image || !drawingDescription}
                         className="btn-primary flex items-center gap-2"
                     >
                         Spark Ideas <Sparkles size={18} />
@@ -480,6 +473,7 @@ export const IdeaSpark: React.FC = () => {
 
     return (
         <div className="min-h-full p-4 md:p-8">
+            {ready && !status?.capabilities.image && <p role="status" className="text-amber-600 mb-4">The active AI connection does not support image analysis. Choose an image-capable connection in Settings to analyze your drawing.</p>}
             <AnimatePresence mode="wait">
                 {stage === 'intro' && <motion.div key="intro" exit={{ opacity: 0, y: -20 }}>{renderIntro()}</motion.div>}
                 {stage === 'personality' && <motion.div key="pers" exit={{ opacity: 0, x: -20 }}>{renderPersonality()}</motion.div>}
@@ -489,7 +483,7 @@ export const IdeaSpark: React.FC = () => {
             </AnimatePresence>
 
             {error && (
-                <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg">
+                <div role="alert" className="mt-4 text-danger">
                     {error}
                 </div>
             )}

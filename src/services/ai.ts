@@ -1,4 +1,4 @@
-import type { AppSettings, ChatMessage, Idea, StructuredAiFallbackPayload, VettingCriteria, VettingResult } from '../types';
+import type { ChatMessage, Idea, StructuredAiFallbackPayload, VettingCriteria, VettingResult } from '../types';
 import {
   StructuredParseError,
   isStructuredParseError,
@@ -152,34 +152,35 @@ async function streamText(
 export const aiService = {
   async generateResponse(
     prompt: string,
-    _settings: AppSettings,
     thinking = false,
     jsonMode = false,
-    _image?: string,
+    image?: string,
     options: RequestOptions = {}
   ): Promise<string> {
     const response = await request<{ response: string }>('/ai/raw-response', {
       prompt,
       thinking,
-      jsonMode
+      jsonMode,
+      image
     }, { signal: options.signal });
     return response.response;
   },
 
   async generateResponseStream(
     prompt: string,
-    settings: AppSettings,
     onChunk: (text: string) => void,
     thinking = false,
     image?: string,
-    options: StreamOptions = {}
+    options: StreamOptions = {},
+    jsonMode = false
   ): Promise<string> {
-    const response = await this.generateResponse(prompt, settings, thinking, false, image, options);
-    onChunk(response);
-    return response;
+    const result = await streamText('/ai/raw-response', {
+      prompt, thinking, jsonMode, image, stream: true
+    }, onChunk, options);
+    return result.fullText;
   },
 
-  async generateIdeas(prompt: string, _settings: AppSettings, image?: string): Promise<GeneratedIdea[]> {
+  async generateIdeas(prompt: string, image?: string): Promise<GeneratedIdea[]> {
     const response = await request<{ ideas: GeneratedIdea[] }>('/ai/generate-ideas', {
       prompt,
       image
@@ -187,21 +188,21 @@ export const aiService = {
     return response.ideas;
   },
 
-  async findSimplestMVP(ideas: Idea[], _settings: AppSettings): Promise<MVPAnalysisResult[]> {
+  async findSimplestMVP(ideas: Idea[]): Promise<MVPAnalysisResult[]> {
     const response = await request<{ results: MVPAnalysisResult[] }>('/ai/find-mvp', {
       ideaIds: ideas.map((idea) => idea.id)
     });
     return response.results;
   },
 
-  async suggestFolders(ideas: Idea[], _currentFolders: Array<{ name: string }>, _settings: AppSettings): Promise<FolderSuggestion[]> {
+  async suggestFolders(ideas: Idea[], _currentFolders: Array<{ name: string }>): Promise<FolderSuggestion[]> {
     const response = await request<{ suggestions: FolderSuggestion[] }>('/ai/suggest-folders', {
       ideaIds: ideas.map((idea) => idea.id)
     });
     return response.suggestions;
   },
 
-  async vetIdeas(ideas: Idea[], criteria: VettingCriteria, _settings: AppSettings): Promise<VettingResult[]> {
+  async vetIdeas(ideas: Idea[], criteria: VettingCriteria): Promise<VettingResult[]> {
     const response = await request<{ results: VettingResult[] }>('/ai/vet', {
       criteria,
       ideaIds: ideas.map((idea) => idea.id)
@@ -209,7 +210,7 @@ export const aiService = {
     return response.results;
   },
 
-  async extractKeywords(idea: Idea, _settings: AppSettings, options: RequestOptions = {}): Promise<string[]> {
+  async extractKeywords(idea: Idea, options: RequestOptions = {}): Promise<string[]> {
     const response = await request<{ keywords: string[] }>('/ai/extract-keywords', {
       ideaId: idea.id
     }, { signal: options.signal });
@@ -220,7 +221,6 @@ export const aiService = {
     prompt: string,
     history: ChatMessage[],
     contextIdea: Idea,
-    _settings: AppSettings,
     onChunk: (text: string) => void,
     options: StreamOptions = {}
   ): Promise<string> {
@@ -234,7 +234,7 @@ export const aiService = {
     return result.fullText;
   },
 
-  async chat(prompt: string, history: ChatMessage[], contextIdea: Idea, _settings: AppSettings): Promise<string> {
+  async chat(prompt: string, history: ChatMessage[], contextIdea: Idea): Promise<string> {
     const response = await request<{ response: string }>('/ai/idea-chat', {
       ideaId: contextIdea.id,
       prompt,
@@ -246,7 +246,6 @@ export const aiService = {
 
   async generateViabilityReportStream(
     idea: Idea,
-    _settings: AppSettings,
     onChunk: (text: string) => void,
     options: StreamOptions = {}
   ): Promise<string> {
@@ -257,7 +256,7 @@ export const aiService = {
     return result.fullText;
   },
 
-  async generateViabilityReport(idea: Idea, _settings: AppSettings): Promise<string> {
+  async generateViabilityReport(idea: Idea): Promise<string> {
     const response = await request<{ report: string }>('/ai/viability-report', {
       ideaId: idea.id
     });
@@ -266,7 +265,6 @@ export const aiService = {
 
   async analyzeCompetitorsStream(
     idea: Idea,
-    _settings: AppSettings,
     onChunk: (text: string) => void,
     options: StreamOptions = {}
   ): Promise<string> {
@@ -277,7 +275,7 @@ export const aiService = {
     return result.fullText;
   },
 
-  async analyzeCompetitors(idea: Idea, _settings: AppSettings): Promise<string> {
+  async analyzeCompetitors(idea: Idea): Promise<string> {
     const response = await request<{ report: string }>('/ai/competitor-analysis', {
       ideaId: idea.id
     });
@@ -287,7 +285,6 @@ export const aiService = {
   async brainstorm(
     prompt: string,
     history: ChatMessage[],
-    _settings: AppSettings,
     options: RequestOptions = {}
   ): Promise<string> {
     const response = await request<{ response: string }>('/ai/brainstorm', {
@@ -299,7 +296,6 @@ export const aiService = {
 
   async summarizeIdeaFromChat(
     history: ChatMessage[],
-    _settings: AppSettings,
     options: RequestOptions = {}
   ): Promise<GeneratedIdea> {
     const response = await request<{ idea: GeneratedIdea }>('/ai/summarize-chat', {

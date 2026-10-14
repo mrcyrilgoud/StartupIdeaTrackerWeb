@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { connectionInputSchema } from './connections/contracts.js';
 
 const statusSchema = z.enum(['draft', 'validation', 'mvp', 'completed', 'archived']);
 const criteriaSchema = z.enum(['realism', 'creativity', 'uniqueness', 'legality']);
@@ -43,13 +44,15 @@ export const ideaSchema = z.object({
   }).partial().optional()
 });
 
-export const appSettingsSchema = z.object({
+export const legacyAppSettingsSchema = z.object({
   provider: z.enum(['gemini', 'ollama', 'cli_proxy']),
   geminiKey: z.string(),
   ollamaEndpoint: z.string(),
   ollamaModel: z.string(),
   cliCommandTemplate: z.string()
 });
+
+export const appSettingsSchema = z.object({ version: z.literal(2), activeConnectionId: z.string().nullable() });
 
 export const ideaEventTypeSchema = z.enum([
   'idea_created',
@@ -156,7 +159,13 @@ export const importDataSchema = z.object({
     title: z.string()
   })).optional(),
   folders: z.array(folderSchema).optional(),
-  settings: appSettingsSchema.partial().optional()
+  settings: z.union([appSettingsSchema, legacyAppSettingsSchema.partial()]).optional(),
+  connections: z.array(z.preprocess((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const { id: _id, ...metadata } = value as Record<string, unknown>;
+    return metadata;
+  }, connectionInputSchema)).optional(),
+  importCredentials: z.boolean().optional()
 });
 
 export const brainstormSchema = z.object({

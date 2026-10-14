@@ -1,4 +1,4 @@
-import { APP_SETTINGS_STORAGE_KEY, DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventDiff, type IdeaEventType } from '../types';
+import { type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventDiff, type IdeaEventType } from '../types';
 
 const API_BASE_URL = '/api';
 const pendingIdeaSaveChains = new Map<string, Promise<unknown>>();
@@ -48,35 +48,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
-}
-
-function hasMeaningfulSettings(settings: AppSettings): boolean {
-  return Boolean(
-    settings.geminiKey.trim()
-    || settings.ollamaEndpoint.trim() !== DEFAULT_APP_SETTINGS.ollamaEndpoint
-    || settings.ollamaModel.trim() !== DEFAULT_APP_SETTINGS.ollamaModel
-    || settings.cliCommandTemplate.trim() !== DEFAULT_APP_SETTINGS.cliCommandTemplate
-    || settings.provider !== DEFAULT_APP_SETTINGS.provider
-  );
-}
-
-async function syncLegacySettingsIfNeeded(currentSettings: AppSettings): Promise<AppSettings> {
-  const stored = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
-  if (!stored || hasMeaningfulSettings(currentSettings)) {
-    return currentSettings;
-  }
-
-  try {
-    const legacySettings = JSON.parse(stored) as AppSettings;
-    const saved = await request<AppSettings>('/settings', {
-      method: 'PUT',
-      body: JSON.stringify(legacySettings)
-    });
-    localStorage.removeItem(APP_SETTINGS_STORAGE_KEY);
-    return saved;
-  } catch {
-    return currentSettings;
-  }
 }
 
 export const dbService = {
@@ -172,16 +143,14 @@ export const dbService = {
   },
 
   async getSettings(): Promise<AppSettings> {
-    const settings = await request<AppSettings>('/settings');
-    return syncLegacySettingsIfNeeded(settings);
+    return request<AppSettings>('/settings');
   },
 
   async saveSettings(settings: AppSettings): Promise<void> {
     await request<AppSettings>('/settings', {
       method: 'PUT',
-      body: JSON.stringify(settings)
+      body: JSON.stringify({ version: 2, activeConnectionId: settings.activeConnectionId })
     });
-    localStorage.removeItem(APP_SETTINGS_STORAGE_KEY);
   },
 
   async exportAllData(): Promise<string> {

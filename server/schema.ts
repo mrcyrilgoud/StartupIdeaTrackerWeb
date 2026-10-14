@@ -76,6 +76,13 @@ export const appMetadataTable = sqliteTable('app_metadata', {
   updatedAt: integer('updated_at').notNull()
 });
 
+export const aiConnectionsTable = sqliteTable('ai_connections', {
+  id: text('id').primaryKey(), name: text('name').notNull(), kind: text('kind').notNull(),
+  provider: text('provider'), model: text('model'), baseUrl: text('base_url'), cliTool: text('cli_tool'),
+  credentialRef: text('credential_ref'), revision: integer('revision').notNull(), testedRevision: integer('tested_revision'),
+  createdAt: integer('created_at').notNull(), updatedAt: integer('updated_at').notNull()
+});
+
 export const schema = {
   ideasTable,
   foldersTable,
@@ -85,5 +92,6 @@ export const schema = {
   ideaVettingResultsTable,
   ideaEventsTable,
   appSettingsTable,
-  appMetadataTable
+  appMetadataTable,
+  aiConnectionsTable
 };

@@ -1,3 +1,4 @@
+import { useAiConnection } from '../context/AiConnectionContext';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu, AlertTriangle } from 'lucide-react';
@@ -15,6 +16,8 @@ import { SmartOrganizeModal } from '../components/SmartOrganizeModal';
 import { ConfirmModal } from '../components/ConfirmModal';
 
 export const Home: React.FC = () => {
+    const { ready } = useAiConnection();
+    const [aiError, setAiError] = useState<string | null>(null);
     const [ideas, setIdeas] = useState<Idea[]>([]);
     const [folders, setFolders] = useState<Folder[]>([]);
     const [selectedFolderId, setSelectedFolderId] = useState<string>('all');
@@ -162,6 +165,8 @@ export const Home: React.FC = () => {
     const handleAnalyzeViability = async (e: React.MouseEvent, idea: Idea) => {
         e.preventDefault(); // Prevent navigation to detail page
         e.stopPropagation();
+        if (!ready) return;
+        setAiError(null);
 
         try {
             setViabilityIdeaTitle(idea.title);
@@ -170,15 +175,9 @@ export const Home: React.FC = () => {
             setShowViabilityModal(true);
             setViabilityLoading(true);
 
-            const settings = await dbService.getSettings();
 
-            if (settings.provider === 'gemini' && !settings.geminiKey) {
-                setViabilityLoading(false);
-                setViabilityError("Please configure your Gemini API Key in Settings first.");
-                return;
-            }
 
-            const report = await aiService.generateViabilityReport(idea, settings);
+            const report = await aiService.generateViabilityReport(idea);
             setViabilityReport(report);
         } catch (e) {
             console.error(e);
@@ -189,6 +188,8 @@ export const Home: React.FC = () => {
     };
 
     const handleAnalyzeMVP = async () => {
+        if (!ready) return;
+        setAiError(null);
         if (filteredIdeas.length === 0) {
             alert("No ideas to analyze in this view!");
             return;
@@ -198,16 +199,9 @@ export const Home: React.FC = () => {
             setAnalyzingMVP(true);
             setMvpResult(null);
             setMvpRawOutput(null);
-            const settings = await dbService.getSettings();
 
-            // Check if key is configured for Gemini (default)
-            if (settings.provider === 'gemini' && !settings.geminiKey) {
-                alert("Please configure your Gemini API Key in Settings first.");
-                setAnalyzingMVP(false);
-                return;
-            }
 
-            const result = await aiService.findSimplestMVP(filteredIdeas, settings);
+            const result = await aiService.findSimplestMVP(filteredIdeas);
             setMvpResult(result);
             setShowMVPModal(true);
         } catch (e) {
@@ -216,7 +210,7 @@ export const Home: React.FC = () => {
                 setShowMVPModal(true);
             } else {
                 console.error(e);
-                alert("Failed to analyze MVP. Please check your AI settings and try again.");
+                setAiError((e as Error).message);
             }
         } finally {
             setAnalyzingMVP(false);
@@ -350,30 +344,24 @@ export const Home: React.FC = () => {
     };
 
     const handleSmartOrganize = async () => {
+        if (!ready) return;
+        setAiError(null);
         try {
             setShowSmartOrganizeModal(true);
             setIsSmartAnalyzing(true);
             setSmartSuggestions([]);
             setSmartOrganizeRawOutput(null);
 
-            const settings = await dbService.getSettings();
 
-            // Check if key is configured for Gemini (default)
-            if (settings.provider === 'gemini' && !settings.geminiKey) {
-                alert("Please configure your Gemini API Key in Settings first.");
-                setShowSmartOrganizeModal(false);
-                setIsSmartAnalyzing(false);
-                return;
-            }
 
-            const suggestions = await aiService.suggestFolders(ideas, folders, settings);
+            const suggestions = await aiService.suggestFolders(ideas, folders);
             setSmartSuggestions(suggestions);
         } catch (e) {
             if (isStructuredParseError(e)) {
                 setSmartOrganizeRawOutput(e.rawOutput);
             } else {
                 console.error("Smart Organize failed:", e);
-                alert("Failed to generate suggestions. Please check your AI settings.");
+                setAiError((e as Error).message);
                 setShowSmartOrganizeModal(false);
             }
         } finally {
@@ -443,6 +431,7 @@ export const Home: React.FC = () => {
     };
 
     const handleVetIdeas = () => {
+        if (!ready) return;
         if (filteredIdeas.length === 0) {
             alert("No ideas to vet!");
             return;
@@ -454,20 +443,16 @@ export const Home: React.FC = () => {
     };
 
     const handleRunVetting = async (criteria: VettingCriteria) => {
+        if (!ready) return;
+        setAiError(null);
         try {
             setCurrentCriteria(criteria);
             setIsVetting(true);
             setVettingResults([]);
             setVettingRawOutput(null);
 
-            const settings = await dbService.getSettings();
-            if (settings.provider === 'gemini' && !settings.geminiKey) {
-                alert("Please configure your Gemini API Key in Settings first.");
-                setIsVetting(false);
-                return;
-            }
 
-            const results = await aiService.vetIdeas(filteredIdeas, criteria, settings);
+            const results = await aiService.vetIdeas(filteredIdeas, criteria);
             setVettingResults(results);
 
             // Persist results to DB
@@ -506,7 +491,7 @@ export const Home: React.FC = () => {
                 setVettingRawOutput(e.rawOutput);
             } else {
                 console.error("Vetting failed:", e);
-                alert("Failed to vet ideas. Please check your AI settings.");
+                setAiError((e as Error).message);
                 // Don't close modal, let user retry or select other criteria
             }
         } finally {
@@ -591,6 +576,7 @@ export const Home: React.FC = () => {
                 onCreateFolder={handleCreateFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onSmartOrganize={handleSmartOrganize}
+                aiDisabled={!ready}
                 onDropIdea={handleDropIdea}
                 className={`
                     shrink-0 border-r border-border transition-transform duration-300 ease-in-out
@@ -610,6 +596,7 @@ export const Home: React.FC = () => {
                 }}
             >
                 <div className="max-w-6xl mx-auto w-full pb-20">
+                    {aiError && <p role="alert" className="text-danger mb-4">{aiError}</p>}
                     {/* Hero Section */}
                     <div className="mb-10 text-center py-10">
                         <h2 className="text-4xl font-extrabold mb-3 bg-clip-text text-transparent bg-gradient-to-r from-accent via-purple-500 to-indigo-600">
@@ -628,7 +615,7 @@ export const Home: React.FC = () => {
                                 className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-accent/5 hover:border-accent hover:text-accent transition-all ${(analyzingMVP || filteredIdeas.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer opacity-100'
                                     }`}
                                 onClick={handleAnalyzeMVP}
-                                disabled={analyzingMVP || filteredIdeas.length === 0}
+                                disabled={!ready || analyzingMVP || filteredIdeas.length === 0}
                             >
                                 <Sparkles size={16} className={analyzingMVP ? "dot-animate" : ""} />
                                 {analyzingMVP ? 'Analyzing...' : 'Find Simplest MVP'}
@@ -636,7 +623,7 @@ export const Home: React.FC = () => {
                             <button
                                 className={`text-sm flex items-center gap-2 px-4 py-2 rounded-lg bg-surface border border-border hover:bg-amber-500/10 hover:border-amber-500 hover:text-amber-500 transition-all ${(isVetting || filteredIdeas.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer opacity-100'}`}
                                 onClick={handleVetIdeas}
-                                disabled={isVetting || filteredIdeas.length === 0}
+                                disabled={!ready || isVetting || filteredIdeas.length === 0}
                             >
                                 <AlertTriangle size={16} className={isVetting ? "dot-animate" : ""} />
                                 {isVetting ? 'Vetting...' : 'Vet Ideas'}
@@ -768,6 +755,7 @@ export const Home: React.FC = () => {
                                         <div className="mt-auto pt-4 border-t border-border/50 flex gap-2" onClick={(e) => e.stopPropagation()}>
                                             <button
                                                 onClick={(e) => handleAnalyzeViability(e, idea)}
+                                                disabled={!ready}
                                                 className="flex-1 btn-text text-xs justify-center bg-background hover:bg-accent hover:text-white border border-border/50"
                                             >
                                                 <Search size={14} /> Viability
@@ -932,6 +920,7 @@ export const Home: React.FC = () => {
                         }}
                         onDelete={handleDeleteVettedIdea}
                         onRunVetting={handleRunVetting}
+                        aiDisabled={!ready}
                     />
 
                     <ConfirmModal

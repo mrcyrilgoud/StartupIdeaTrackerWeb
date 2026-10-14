@@ -3,10 +3,18 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { StructuredParseError, type BackendAiService } from './ai.js';
-import { MAX_HISTORY_SUMMARY_EVENTS, appSettingsSchema, brainstormSchema, diffIdeaEventInputSchema, folderSchema, generateIdeasSchema, ideaChatSchema, ideaEventDiffSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, importDataSchema, listIdeaEventsInputSchema, saveIdeaRequestSchema, suggestFoldersSchema, summarizeChatSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
+import { MAX_HISTORY_SUMMARY_EVENTS, brainstormSchema, diffIdeaEventInputSchema, generateIdeasSchema, ideaChatSchema, ideaEventDiffSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, importDataSchema, listIdeaEventsInputSchema, saveIdeaRequestSchema, suggestFoldersSchema, summarizeChatSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
 import { createIdeaMcpServer } from './mcp.js';
 import { getAllowedOrigins, SERVER_HOST } from './config.js';
 import { NotFoundError } from './errors.js';
+import { AiConnectionError } from './errors.js';
+import { CredentialStoreError } from './credentials/CredentialStore.js';
+import { AiProviderError } from './ai/providers/errors.js';
+import type { ConnectionService } from './connections/ConnectionService.js';
+import { activeConnectionSchema, connectionInputSchema, credentialWriteSchema } from './connections/contracts.js';
+import { legacyAppSettingsSchema } from './contracts.js';
+import { migrateSettings } from './ai/migrateSettings.js';
+import { importBackup } from './connections/importBackup.js';
 import { computeIdeaEventDiff } from './ideaHistory.js';
 import type { AppStore } from './store.js';
 import type { ChatMessage, Idea } from '../src/types.js';
@@ -14,7 +22,13 @@ import type { ChatMessage, Idea } from '../src/types.js';
 type ParsedRequest<T> = Request<Record<string, string>, unknown, T>;
 type SaveIdeaInput = z.infer<typeof saveIdeaRequestSchema>;
 
-function parseBody<T>(schema: z.ZodSchema<T>, value: unknown): T {
+function requestOptions(res: Response) {
+  const controller = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+  return { signal: controller.signal };
+}
+
+function parseBody<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown): T {
   return schema.parse(value);
 }
 
@@ -48,17 +62,6 @@ function normalizeIdeaForStorage(input: SaveIdeaInput): Idea {
   };
 }
 
-function normalizeImportPayload(payload: z.infer<typeof importDataSchema>): {
-  ideas?: Idea[];
-  folders?: z.infer<typeof folderSchema>[];
-  settings?: Partial<z.infer<typeof appSettingsSchema>>;
-} {
-  return {
-    ...payload,
-    ideas: payload.ideas?.map(normalizeIdeaForStorage)
-  };
-}
-
 function normalizeChatHistory(history: ChatMessage[] | undefined, prompt: string, fallback: ChatMessage[]): ChatMessage[] {
   const source = history && history.length > 0 ? history : fallback;
   const normalized = [...source];
@@ -85,16 +88,18 @@ function sendStream(
   res.flushHeaders?.();
 
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  res.on('close', () => { if (!res.writableEnded) controller.abort(); });
 
   let fullText = '';
   const emitDelta = (delta: string) => {
+    if (controller.signal.aborted || res.destroyed) return;
     fullText += delta;
     res.write(`data: ${JSON.stringify({ delta, fullText })}\n\n`);
   };
 
   void runner(emitDelta, controller.signal)
     .then((finalText) => {
+      if (controller.signal.aborted || res.destroyed) return;
       res.write(`data: ${JSON.stringify({ done: true, fullText: finalText })}\n\n`);
     })
     .catch((error: unknown) => {
@@ -106,15 +111,19 @@ function sendStream(
         return;
       }
       const message = error instanceof Error ? error.message : 'Unknown streaming error';
-      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: message, ...((error as { code?: string })?.code ? { code: (error as { code: string }).code } : {}) })}\n\n`);
     })
     .finally(() => {
       res.end();
     });
 }
 
-export function createHttpApp(store: AppStore, aiService: BackendAiService) {
+export function createHttpApp(store: AppStore, aiService: BackendAiService, connections?: ConnectionService) {
   const app = express();
+  const connectionService = () => {
+    if (!connections) throw new AiConnectionError('AI_SETUP_REQUIRED', 'AI connections are not initialized.');
+    return connections;
+  };
   const allowedOrigins = new Set(getAllowedOrigins());
   const allowedHostnames = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
@@ -322,16 +331,44 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
 
   app.put('/api/settings', async (req, res, next) => {
     try {
-      res.json(await store.saveSettings(parseBody(appSettingsSchema, req.body)));
+      const { activeConnectionId } = activeConnectionSchema.parse(req.body);
+      res.json(await connectionService().activate(activeConnectionId));
     } catch (error) {
       next(error);
     }
   });
 
+  app.get('/api/ai/connections', (_req, res, next) => { try { res.json(connectionService().list()); } catch (error) { next(error); } });
+  app.post('/api/ai/connections', (req, res, next) => { try { res.status(201).json(connectionService().create(connectionInputSchema.parse(req.body))); } catch (error) { next(error); } });
+  app.patch('/api/ai/connections/:id', async (req, res, next) => { try { res.json(await connectionService().update(req.params.id, req.body)); } catch (error) { next(error); } });
+  app.delete('/api/ai/connections/:id', async (req, res, next) => { try { await connectionService().delete(req.params.id); res.status(204).end(); } catch (error) { next(error); } });
+  app.put('/api/ai/connections/:id/credential', async (req, res, next) => { try { await connectionService().setCredential(req.params.id, credentialWriteSchema.parse(req.body).apiKey); res.status(204).end(); } catch (error) { next(error); } });
+  app.delete('/api/ai/connections/:id/credential', async (req, res, next) => { try { await connectionService().deleteCredential(req.params.id); res.status(204).end(); } catch (error) { next(error); } });
+  app.post('/api/ai/connections/:id/test', async (req, res, next) => { try { res.json(await connectionService().test(req.params.id)); } catch (error) { next(error); } });
+  app.get('/api/ai/status', async (_req, res, next) => { try { res.json(await connectionService().status()); } catch (error) { next(error); } });
+  app.get('/api/ai/proxy-tools', async (_req, res, next) => { try { res.json(await connectionService().proxyTools()); } catch (error) { next(error); } });
+  app.get('/api/ai/connections/:id/models', async (req, res, next) => { try { res.json(await connectionService().models(req.params.id)); } catch (error) { next(error); } });
+  app.post('/api/ai/retry-migration', async (_req, res, next) => {
+    try {
+      const service = connectionService(); await migrateSettings(service);
+      if (service.migrationError) throw new AiConnectionError('AI_CREDENTIAL_STORE_UNAVAILABLE', service.migrationError, 503);
+      res.json({ ok: true });
+    } catch (error) { next(error); }
+  });
+  app.post('/api/ai/migrate-legacy-settings', async (req, res, next) => {
+    try {
+      const service = connectionService();
+      const { settings } = z.object({ settings: legacyAppSettingsSchema }).strict().parse(req.body);
+      await migrateSettings(service, settings);
+      if (service.migrationError) throw new AiConnectionError('AI_CREDENTIAL_STORE_UNAVAILABLE', service.migrationError, 503);
+      res.json(await store.getSettings());
+    } catch (error) { next(error); }
+  });
+
   app.post('/api/ai/generate-ideas', async (req, res, next) => {
     try {
       const body = parseBody(generateIdeasSchema, req.body);
-      res.json({ ideas: await aiService.generateIdeas(body.prompt, body.image) });
+      res.json({ ideas: await aiService.generateIdeas(body.prompt, body.image, requestOptions(res)) });
     } catch (error) {
       next(error);
     }
@@ -340,7 +377,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
   app.post('/api/ai/brainstorm', async (req, res, next) => {
     try {
       const body = parseBody(brainstormSchema, req.body);
-      res.json({ response: await aiService.brainstorm(body.prompt, body.history ?? []) });
+      res.json({ response: await aiService.brainstorm(body.prompt, body.history ?? [], requestOptions(res)) });
     } catch (error) {
       next(error);
     }
@@ -349,7 +386,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
   app.post('/api/ai/summarize-chat', async (req, res, next) => {
     try {
       const body = parseBody(summarizeChatSchema, req.body);
-      res.json({ idea: await aiService.summarizeIdeaFromChat(body.history) });
+      res.json({ idea: await aiService.summarizeIdeaFromChat(body.history, requestOptions(res)) });
     } catch (error) {
       next(error);
     }
@@ -379,7 +416,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         return;
       }
 
-      const response = await aiService.chat(body.prompt, baseHistory, idea);
+      const response = await aiService.chat(body.prompt, baseHistory, idea, requestOptions(res));
       if (body.persist) {
         await store.updateIdea(body.ideaId, {
           chatHistory: [...historyForPersistence, makeAssistantMessage(response)]
@@ -399,7 +436,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         res.status(404).json({ error: 'Idea not found' });
         return;
       }
-      const keywords = await aiService.extractKeywords(idea);
+      const keywords = await aiService.extractKeywords(idea, requestOptions(res));
       await store.appendIdeaEvent(body.ideaId, 'ai_keywords_extracted', {
         keywordCount: keywords.length,
         keywords
@@ -433,7 +470,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         return;
       }
 
-      const report = await aiService.generateViabilityReport(idea);
+      const report = await aiService.generateViabilityReport(idea, requestOptions(res));
       await store.appendIdeaEvent(body.ideaId, 'ai_viability_report_generated', {
         reportLength: report.length
       });
@@ -466,7 +503,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         return;
       }
 
-      const report = await aiService.analyzeCompetitors(idea);
+      const report = await aiService.analyzeCompetitors(idea, requestOptions(res));
       await store.appendIdeaEvent(body.ideaId, 'ai_competitor_analysis_generated', {
         reportLength: report.length
       });
@@ -482,7 +519,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
       const ideas = body.ideaIds && body.ideaIds.length > 0
         ? (await Promise.all(body.ideaIds.map((ideaId) => store.getIdea(ideaId)))).filter(isIdea)
         : await store.listIdeas();
-      res.json({ results: await aiService.findSimplestMVP(ideas) });
+      res.json({ results: await aiService.findSimplestMVP(ideas, requestOptions(res)) });
     } catch (error) {
       next(error);
     }
@@ -494,7 +531,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
       const ideas = body.ideaIds && body.ideaIds.length > 0
         ? (await Promise.all(body.ideaIds.map((ideaId) => store.getIdea(ideaId)))).filter(isIdea)
         : await store.listIdeas();
-      res.json({ results: await aiService.vetIdeas(ideas, body.criteria) });
+      res.json({ results: await aiService.vetIdeas(ideas, body.criteria, requestOptions(res)) });
     } catch (error) {
       next(error);
     }
@@ -507,7 +544,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
         ? (await Promise.all(body.ideaIds.map((ideaId) => store.getIdea(ideaId)))).filter(isIdea)
         : await store.listIdeas();
       const folders = await store.listFolders();
-      res.json({ suggestions: await aiService.suggestFolders(ideas, folders) });
+      res.json({ suggestions: await aiService.suggestFolders(ideas, folders, requestOptions(res)) });
     } catch (error) {
       next(error);
     }
@@ -518,10 +555,14 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
       const body = parseBody(z.object({
         prompt: z.string().min(1),
         thinking: z.boolean().optional(),
-        jsonMode: z.boolean().optional()
+        jsonMode: z.boolean().optional(), image: z.string().optional(), stream: z.boolean().optional()
       }), req.body);
+      if (body.stream) {
+        sendStream(req, res, (emitDelta, signal) => aiService.generateResponseStream(body.prompt, emitDelta, body.thinking, body.image, { signal, emitDelta: true }));
+        return;
+      }
       res.json({
-        response: await aiService.generateResponse(body.prompt, body.thinking, body.jsonMode)
+        response: await aiService.generateResponse(body.prompt, body.thinking, body.jsonMode, body.image, requestOptions(res))
       });
     } catch (error) {
       next(error);
@@ -538,7 +579,7 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
 
   app.post('/api/import', async (req, res, next) => {
     try {
-      await store.importData(normalizeImportPayload(parseBody(importDataSchema, req.body)));
+      await importBackup(connectionService(), parseBody(importDataSchema, req.body));
       res.json({ ok: true });
     } catch (error) {
       next(error);
@@ -589,6 +630,10 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService) {
     }
     if (error instanceof NotFoundError) {
       res.status(404).json({ error: message });
+      return;
+    }
+    if (error instanceof AiConnectionError || error instanceof CredentialStoreError || error instanceof AiProviderError) {
+      res.status(error.status).json({ error: message, code: error.code });
       return;
     }
     if (error instanceof StructuredParseError) {

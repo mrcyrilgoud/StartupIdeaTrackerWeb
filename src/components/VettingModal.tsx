@@ -13,9 +13,10 @@ interface VettingModalProps {
     onClose: () => void;
     onDelete: (ideaId: string) => void;
     onRunVetting: (criteria: VettingCriteria) => void;
+    aiDisabled?: boolean;
 }
 
-export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, results, rawOutput, ideas, currentCriteria, onClose, onDelete, onRunVetting }) => {
+export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, results, rawOutput, ideas, currentCriteria, onClose, onDelete, onRunVetting, aiDisabled = false }) => {
     if (!isOpen) return null;
 
     // Derived state for display
@@ -66,6 +67,7 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <button
                                 onClick={() => onRunVetting('realism')}
+                                disabled={aiDisabled}
                                 className="p-6 rounded-xl border border-border hover:border-amber-500 hover:bg-amber-500/5 transition-all text-left group"
                             >
                                 <div className="flex items-center gap-3 mb-2">
@@ -79,6 +81,7 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
 
                             <button
                                 onClick={() => onRunVetting('creativity')}
+                                disabled={aiDisabled}
                                 className="p-6 rounded-xl border border-border hover:border-yellow-500 hover:bg-yellow-500/5 transition-all text-left group"
                             >
                                 <div className="flex items-center gap-3 mb-2">
@@ -92,6 +95,7 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
 
                             <button
                                 onClick={() => onRunVetting('uniqueness')}
+                                disabled={aiDisabled}
                                 className="p-6 rounded-xl border border-border hover:border-purple-500 hover:bg-purple-500/5 transition-all text-left group"
                             >
                                 <div className="flex items-center gap-3 mb-2">
@@ -105,6 +109,7 @@ export const VettingModal: React.FC<VettingModalProps> = ({ isOpen, loading, res
 
                             <button
                                 onClick={() => onRunVetting('legality')}
+                                disabled={aiDisabled}
                                 className="p-6 rounded-xl border border-border hover:border-blue-500 hover:bg-blue-500/5 transition-all text-left group"
                             >
                                 <div className="flex items-center gap-3 mb-2">

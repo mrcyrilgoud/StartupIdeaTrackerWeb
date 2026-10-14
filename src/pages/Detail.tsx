@@ -1,9 +1,10 @@
+import { useAiConnection } from '../context/AiConnectionContext';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import { dbService } from '../services/db';
 import { aiService } from '../services/ai';
-import { Idea, AppSettings, ChatMessage, IdeaEvent, IdeaEventDiff, STATUS_LABELS, STATUS_COLORS, StructuredAiFallbackPayload } from '../types';
+import { Idea, ChatMessage, IdeaEvent, IdeaEventDiff, STATUS_LABELS, STATUS_COLORS, StructuredAiFallbackPayload } from '../types';
 import { Chat } from '../components/features/Chat';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OpenCodeModal } from '../components/OpenCodeModal';
@@ -86,7 +87,8 @@ export const Detail: React.FC = () => {
     const navigate = useNavigate();
     const [idea, setIdea] = useState<Idea | null>(null);
     const [loading, setLoading] = useState(true);
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const { ready } = useAiConnection();
+    const [keywordError, setKeywordError] = useState<string | null>(null);
 
     // Viability analysis state
     const [viabilityLoading, setViabilityLoading] = useState(false);
@@ -312,13 +314,9 @@ export const Detail: React.FC = () => {
             }
 
             try {
-                const [loadedIdea, appSettings] = await Promise.all([
-                    dbService.getIdea(id),
-                    dbService.getSettings()
-                ]);
+                const loadedIdea = await dbService.getIdea(id);
 
                 setIdea(loadedIdea ?? null);
-                setSettings(appSettings);
             } catch (error) {
                 console.error('Failed to load idea detail:', error);
                 setIdea(null);
@@ -396,7 +394,7 @@ export const Detail: React.FC = () => {
     }, [eventDiffs, expandedDiffIds, id]);
 
     const handleSummarizeHistory = useCallback(async () => {
-        if (!id || summaryFromId === null || summaryToId === null) return;
+        if (!ready || !id || summaryFromId === null || summaryToId === null) return;
 
         const fromId = Math.min(summaryFromId, summaryToId);
         const toId = Math.max(summaryFromId, summaryToId);
@@ -429,7 +427,7 @@ export const Detail: React.FC = () => {
             }
             setHistorySummaryLoading(false);
         }
-    }, [id, isAbortError, summaryFromId, summaryToId]);
+    }, [ready, id, isAbortError, summaryFromId, summaryToId]);
 
     // This function now only updates local state and DB for *user text edits*.
     const handleTextChange = (field: keyof Idea, value: string) => {
@@ -464,10 +462,11 @@ export const Detail: React.FC = () => {
     };
 
     const extractKeywords = async () => {
-        if (!idea || !settings || !canPersistIdea(idea)) return;
+        if (!idea || !ready || !canPersistIdea(idea)) return;
         setExtracting(true);
+        setKeywordError(null);
         try {
-            const keywords = await aiService.extractKeywords(idea, settings);
+            const keywords = await aiService.extractKeywords(idea);
 
             setIdea(prev => {
                 if (!prev) return null;
@@ -476,7 +475,7 @@ export const Detail: React.FC = () => {
                 return updated;
             });
         } catch (e) {
-            alert('Failed to extract keywords');
+            setKeywordError((e as Error).message);
         } finally {
             setExtracting(false);
         }
@@ -544,7 +543,7 @@ export const Detail: React.FC = () => {
 
     // Handler for viability analysis
     const handleAnalyzeViability = async () => {
-        if (!idea || !settings || !canPersistIdea(idea)) return;
+        if (!idea || !ready || !canPersistIdea(idea)) return;
         let controller: AbortController | null = null;
 
         try {
@@ -560,18 +559,11 @@ export const Detail: React.FC = () => {
                 viabilityStreamTimerRef.current = null;
             }
 
-            if (settings.provider === 'gemini' && !settings.geminiKey) {
-                setViabilityLoading(false);
-                setViabilityError("Please configure your Gemini API Key in Settings first.");
-                return;
-            }
-
             controller = new AbortController();
             viabilityStreamAbortRef.current = controller;
 
             await aiService.generateViabilityReportStream(
                 idea,
-                settings,
                 queueViabilityStreamChunk,
                 { emitDelta: true, signal: controller.signal }
             );
@@ -596,7 +588,7 @@ export const Detail: React.FC = () => {
 
     // Handler for competitor analysis
     const handleAnalyzeCompetitors = async () => {
-        if (!idea || !settings || !canPersistIdea(idea)) return;
+        if (!idea || !ready || !canPersistIdea(idea)) return;
         let controller: AbortController | null = null;
 
         try {
@@ -612,18 +604,11 @@ export const Detail: React.FC = () => {
                 competitorStreamTimerRef.current = null;
             }
 
-            if (settings.provider === 'gemini' && !settings.geminiKey) {
-                setCompetitorLoading(false);
-                setCompetitorError("Please configure your Gemini API Key in Settings first.");
-                return;
-            }
-
             controller = new AbortController();
             competitorStreamAbortRef.current = controller;
 
             await aiService.analyzeCompetitorsStream(
                 idea,
-                settings,
                 queueCompetitorStreamChunk,
                 { emitDelta: true, signal: controller.signal }
             );
@@ -679,6 +664,7 @@ export const Detail: React.FC = () => {
 
     return (
         <div className="max-w-[1200px] mx-auto h-full flex flex-col w-full">
+            {keywordError && <p role="alert" className="text-danger mb-4">{keywordError}</p>}
             <div className="flex justify-between items-center mb-4">
                 <button
                     onClick={() => navigate('/')}
@@ -715,7 +701,7 @@ export const Detail: React.FC = () => {
                         onClick={handleAnalyzeViability}
                         className="btn-icon text-accent"
                         title="Examine Business Viability"
-                        disabled={viabilityLoading || !hasPersistableTitle}
+                        disabled={!ready || viabilityLoading || !hasPersistableTitle}
                     >
                         <Search size={20} />
                     </button>
@@ -723,7 +709,7 @@ export const Detail: React.FC = () => {
                         onClick={handleAnalyzeCompetitors}
                         className="btn-icon text-[#ff3b30]"
                         title="Competitor Analysis"
-                        disabled={competitorLoading || !hasPersistableTitle}
+                        disabled={!ready || competitorLoading || !hasPersistableTitle}
                     >
                         <Swords size={20} />
                     </button>
@@ -785,7 +771,7 @@ export const Detail: React.FC = () => {
                             <button
                                 onClick={extractKeywords}
                                 className="btn-text"
-                                disabled={extracting || !hasPersistableTitle}
+                                disabled={!ready || extracting || !hasPersistableTitle}
                             >
                                 <Sparkles size={12} /> {extracting ? 'Extracting...' : 'Extract'}
                             </button>
@@ -867,7 +853,7 @@ export const Detail: React.FC = () => {
                         </select>
                         <button
                             onClick={handleSummarizeHistory}
-                            disabled={historySummaryLoading || summaryFromId === null || summaryToId === null}
+                            disabled={!ready || historySummaryLoading || summaryFromId === null || summaryToId === null}
                             className="btn-text justify-center rounded-xl border border-border px-4 py-2 text-sm md:col-span-2"
                         >
                             {historySummaryLoading ? 'Summarizing...' : 'Summarize selected range'}

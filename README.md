@@ -70,10 +70,29 @@ AI_CLI_PROXY_PATH=/path/to/AI-CLI-Proxy-Server npm run dev
 
 ## AI Configuration
 
-Open the Settings page in the app and configure one of:
-- Gemini: set your API key
-- Ollama: point to your local Ollama endpoint and model
-- CLI Proxy: `npm run dev` starts the companion proxy on `http://localhost:3333`
+On first run, choose **Set up AI** or continue capturing ideas without AI. There is no automatically selected provider. In Settings, save a named connection, run **Test**, then **Make active**. Tests send a small inference request and can consume usage. Editing a model, endpoint, tool, or key requires another test.
+
+- Direct APIs: OpenAI Responses, Anthropic/Claude Messages, Google Gemini, and OpenAI-compatible services. Enter the exact model ID, or load the provider's model list after saving a credential. Compatible APIs use a base URL such as `https://api.example.com/v1`.
+- Ollama: configure its endpoint and model. HTTP is permitted for loopback services; remote endpoints require HTTPS.
+- CLI through proxy: select Codex, Claude Code, Cursor, Kiro, Gemini, or OpenCode from the companion proxy. `npm run dev` starts that proxy. Install and sign in through the official CLI; manage CLI API keys in the proxy. Subscription login tokens are never entered into this app.
+
+API keys are stored in **macOS Keychain**, using native bindings. SQLite stores connection metadata and credential references; the browser only receives `hasKey`. The backend and stdio MCP share the database's active connection. Keychain access must be allowed for the Node process; other operating systems do not currently support storing API credentials in this app.
+
+Existing configured settings migrate once. Gemini keys are verified in Keychain before the legacy database field is cleared. If access is denied, allow access and use **Refresh connections** in Settings to retry. Empty Gemini defaults enter setup instead of failing the first AI request.
+
+Version-2 backups include ideas, folders, and credential-free connection metadata. Imported profiles are inactive and require credentials and testing. Legacy backups with embedded keys ask whether to import those keys into Keychain. Existing backup files and old database copies may still contain credentials and are not rewritten.
+
+### Verification
+
+```bash
+npm test
+npm run build
+npm run e2e:thorough
+```
+
+The browser suite uses temporary SQLite storage, mocked AI responses, and isolated ports. Install Chromium once with `npx playwright install chromium` if it is not present. `npm run e2e:lag` runs the same tracked regression harness. Automated provider tests make no paid API calls.
+
+On macOS, `NATIVE_KEYCHAIN_TEST=1 npm test` also verifies a disposable Keychain-backed connection against a loopback mock. It cleans up its test entries and makes no external provider calls.
 
 ## MCP Usage
 

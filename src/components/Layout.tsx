@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { Lightbulb, Settings, Sparkles, Gamepad2 } from 'lucide-react';
+import { AiSetupNotice } from './AiSetupNotice';
 
 export const Layout: React.FC = () => {
     const location = useLocation();
@@ -63,6 +64,7 @@ export const Layout: React.FC = () => {
             </header>
 
             <main className="flex-1 overflow-auto p-4">
+                {location.pathname !== '/settings' && <AiSetupNotice />}
                 <Outlet />
             </main>
         </div>

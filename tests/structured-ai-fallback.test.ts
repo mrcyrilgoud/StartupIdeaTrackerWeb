@@ -38,7 +38,7 @@ const TEST_HISTORY: ChatMessage[] = [{
 
 class StructuredOutputTestAiService extends BackendAiService {
   constructor(private readonly responseText: string) {
-    super(async () => TEST_SETTINGS);
+    super(async () => ({ connection: { id: 'test', name: 'Test', kind: 'cli_proxy', tool: 'codex', revision: 1 } }));
   }
 
   override async generateResponse(): Promise<string> {

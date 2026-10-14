@@ -1,8 +1,10 @@
+import { useAiConnection } from '../../context/AiConnectionContext';
+import { AiSetupNotice } from '../AiSetupNotice';
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Sparkles, Plus, ArrowRight, Square } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
-import { ChatMessage, AppSettings, Idea } from '../../types';
+import { ChatMessage, Idea } from '../../types';
 import { aiService, isStructuredParseError } from '../../services/ai';
 import { dbService } from '../../services/db';
 import { StructuredAiFallback } from '../StructuredAiFallback';
@@ -14,15 +16,12 @@ export const HomeChat: React.FC = () => {
     const [history, setHistory] = useState<ChatMessage[]>([]);
     const [loading, setLoading] = useState(false);
     const [creatingIdea, setCreatingIdea] = useState(false);
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const { ready } = useAiConnection();
+    const [requestError, setRequestError] = useState<string | null>(null);
     const [summaryFallback, setSummaryFallback] = useState<{ rawOutput: string; history: ChatMessage[] } | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const activeRequestAbortRef = useRef<AbortController | null>(null);
     const isMountedRef = useRef(true);
-
-    useEffect(() => {
-        dbService.getSettings().then(setSettings);
-    }, []);
 
     useEffect(() => {
         if (history.length > 0) {
@@ -50,7 +49,8 @@ export const HomeChat: React.FC = () => {
     };
 
     const handleSend = async () => {
-        if (!input.trim()) return;
+        if (!ready || loading || creatingIdea || !input.trim()) return;
+        setRequestError(null);
 
         const userMsg: ChatMessage = {
             id: uuidv4(),
@@ -64,23 +64,13 @@ export const HomeChat: React.FC = () => {
         setInput('');
         setSummaryFallback(null);
 
-        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: "Please configure your API Key in Settings to start brainstorming.",
-                timestamp: Date.now()
-            };
-            setHistory([...newHistory, errorMsg]);
-            return;
-        }
 
         setLoading(true);
         const controller = new AbortController();
         activeRequestAbortRef.current = controller;
 
         try {
-            const rawResponse = await aiService.brainstorm(userMsg.content, newHistory, settings, { signal: controller.signal });
+            const rawResponse = await aiService.brainstorm(userMsg.content, newHistory, { signal: controller.signal });
 
             let response = rawResponse;
             let shouldCreateIdea = false;
@@ -111,13 +101,7 @@ export const HomeChat: React.FC = () => {
         } catch (error) {
             if (controller.signal.aborted || isAbortError(error)) return;
             console.error(error);
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: "Sorry, I encountered an error. Please try again.",
-                timestamp: Date.now()
-            };
-            setHistory([...newHistory, errorMsg]);
+            setRequestError((error as Error).message);
         } finally {
             if (activeRequestAbortRef.current === controller) {
                 activeRequestAbortRef.current = null;
@@ -132,17 +116,17 @@ export const HomeChat: React.FC = () => {
         // historyOverride might be a click event if called from button
         const historyToUse = Array.isArray(historyOverride) ? historyOverride : history;
 
-        if (historyToUse.length === 0 || creatingIdea) return;
+        if (!ready || loading || historyToUse.length === 0 || creatingIdea) return;
+        setRequestError(null);
         setCreatingIdea(true);
         setSummaryFallback(null);
         const controller = new AbortController();
         activeRequestAbortRef.current = controller;
 
         try {
-            if (!settings) throw new Error("Settings not loaded");
 
             // 1. Summarize conversation into an idea
-            const generatedIdea = await aiService.summarizeIdeaFromChat(historyToUse, settings, { signal: controller.signal });
+            const generatedIdea = await aiService.summarizeIdeaFromChat(historyToUse, { signal: controller.signal });
 
             // 2. Create the wrapper Idea object
             const newIdea: Idea = {
@@ -177,7 +161,7 @@ export const HomeChat: React.FC = () => {
                 return;
             }
             console.error("Failed to create idea", error);
-            alert("Failed to create idea from chat. Please try again.");
+            setRequestError((error as Error).message);
         } finally {
             if (activeRequestAbortRef.current === controller) {
                 activeRequestAbortRef.current = null;
@@ -233,6 +217,8 @@ export const HomeChat: React.FC = () => {
     return (
         <div className={`w-full max-w-3xl mx-auto transition-all duration-500 ${hasStarted ? 'mb-10' : 'mb-0'}`}>
 
+            <AiSetupNotice />
+            {requestError && <p role="alert" className="text-danger mb-4">{requestError}</p>}
             {/* Chat Area */}
             {hasStarted && (
                 <div className="bg-surface border border-border rounded-2xl shadow-xl overflow-hidden mb-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -253,7 +239,7 @@ export const HomeChat: React.FC = () => {
                             )}
                             <button
                                 onClick={handleCreateIdea}
-                                disabled={creatingIdea || loading}
+                                disabled={!ready || creatingIdea || loading}
                                 className="btn-primary text-xs py-1.5 px-3 shadow-none"
                             >
                                 {creatingIdea ? 'Creating...' : (
@@ -328,16 +314,16 @@ export const HomeChat: React.FC = () => {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !loading) handleSend();
+                            if (e.key === 'Enter' && ready && !loading) handleSend();
                         }}
                         placeholder={hasStarted ? "Reply..." : "I have an idea for..."}
                         className="flex-1 bg-transparent border-none outline-none text-lg p-3 placeholder:text-text-secondary/50"
-                        disabled={loading || creatingIdea}
+                        disabled={!ready || loading || creatingIdea}
                         autoFocus
                     />
                     <button
                         onClick={handleSend}
-                        disabled={!input.trim() || loading || creatingIdea}
+                        disabled={!ready || !input.trim() || loading || creatingIdea}
                         className={`p-3 rounded-xl transition-all duration-200 ${input.trim()
                             ? 'bg-accent text-white shadow-md hover:shadow-lg hover:bg-accent-hover'
                             : 'bg-transparent text-text-secondary opacity-50 cursor-not-allowed'

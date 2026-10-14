@@ -1,8 +1,8 @@
+import { useAiConnection } from '../../context/AiConnectionContext';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, FileText, Download, PlusCircle, Undo, Sparkles, Target, Puzzle, Scale, Users, Square } from 'lucide-react';
-import { Idea, ChatMessage, AppSettings } from '../../types';
+import { Idea, ChatMessage } from '../../types';
 import { aiService } from '../../services/ai';
-import { dbService } from '../../services/db';
 import { v4 as uuidv4 } from 'uuid';
 
 const QUICK_PROMPTS = [
@@ -53,7 +53,8 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
     const STREAM_UPDATE_INTERVAL_MS = 75;
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const { ready } = useAiConnection();
+    const [requestError, setRequestError] = useState<string | null>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const [isStreaming, setIsStreaming] = useState(false);
     const [streamingContent, setStreamingContent] = useState('');
@@ -64,10 +65,6 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
     const isInteractionBlocked = Boolean(interactionBlockedReason);
 
     const safeHistory = idea.chatHistory || [];
-
-    useEffect(() => {
-        dbService.getSettings().then(setSettings);
-    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -124,8 +121,8 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
     }, []);
 
     const sendMessage = async () => {
-        if (isInteractionBlocked) return;
-        if (!input.trim()) return;
+        if (!ready || loading || isInteractionBlocked || !input.trim()) return;
+        setRequestError(null);
 
         const userMsg: ChatMessage = {
             id: uuidv4(),
@@ -139,16 +136,6 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         onChatUpdate(historyWithUser);
         setInput('');
 
-        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: "Please configure your API Key in Settings to use the AI Assistant.",
-                timestamp: Date.now()
-            };
-            onChatUpdate([...historyWithUser, errorMsg]);
-            return;
-        }
         setLoading(true);
         setIsStreaming(true);
         setStreamingContent('');
@@ -165,7 +152,6 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                 userMsg.content,
                 safeHistory,
                 idea,
-                settings,
                 queueStreamChunk,
                 { emitDelta: true, signal: controller.signal }
             );
@@ -181,13 +167,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
             onChatUpdate([...historyWithUser, aiMsg]);
         } catch (error) {
             if (!isMountedRef.current || controller?.signal.aborted || isAbortError(error)) return;
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: `Error: ${(error as Error).message}`,
-                timestamp: Date.now()
-            };
-            onChatUpdate([...historyWithUser, errorMsg]);
+            setRequestError((error as Error).message);
         } finally {
             if (activeStreamAbortRef.current === controller) {
                 activeStreamAbortRef.current = null;
@@ -234,7 +214,8 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
     };
 
     const sendQuickPrompt = async (promptText: string) => {
-        if (loading || isInteractionBlocked) return;
+        if (!ready || loading || isInteractionBlocked) return;
+        setRequestError(null);
 
         const userMsg: ChatMessage = {
             id: uuidv4(),
@@ -246,16 +227,6 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         const historyWithUser = [...safeHistory, userMsg];
         onChatUpdate(historyWithUser);
 
-        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: "Please configure your API Key in Settings to use the AI Assistant.",
-                timestamp: Date.now()
-            };
-            onChatUpdate([...historyWithUser, errorMsg]);
-            return;
-        }
 
         setLoading(true);
         setIsStreaming(true);
@@ -273,7 +244,6 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                 promptText,
                 safeHistory,
                 idea,
-                settings,
                 queueStreamChunk,
                 { emitDelta: true, signal: controller.signal }
             );
@@ -287,13 +257,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
             onChatUpdate([...historyWithUser, aiMsg]);
         } catch (error) {
             if (!isMountedRef.current || controller?.signal.aborted || isAbortError(error)) return;
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: `Error: ${(error as Error).message}`,
-                timestamp: Date.now()
-            };
-            onChatUpdate([...historyWithUser, errorMsg]);
+            setRequestError((error as Error).message);
         } finally {
             if (activeStreamAbortRef.current === controller) {
                 activeStreamAbortRef.current = null;
@@ -313,17 +277,8 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
     };
 
     const generatePlan = async () => {
-        if (isInteractionBlocked) return;
-        if (!settings || (settings.provider === 'gemini' && !settings.geminiKey)) {
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: "Please configure your API Key in Settings to use the AI Assistant.",
-                timestamp: Date.now()
-            };
-            onChatUpdate([...safeHistory, errorMsg]);
-            return;
-        }
+        if (!ready || loading || isInteractionBlocked) return;
+        setRequestError(null);
         setLoading(true);
         try {
             const plan = await aiService.generateResponse(`
@@ -341,7 +296,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         4. Monetization Path
         
         Format it nicely with Markdown headers.
-        `, settings);
+        `);
 
             const aiMsg: ChatMessage = {
                 id: uuidv4(),
@@ -351,13 +306,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
             };
             onChatUpdate([...safeHistory, aiMsg]);
         } catch (error) {
-            const errorMsg: ChatMessage = {
-                id: uuidv4(),
-                role: 'system',
-                content: `Failed to generate plan: ${(error as Error).message}`,
-                timestamp: Date.now()
-            };
-            onChatUpdate([...safeHistory, errorMsg]);
+            setRequestError((error as Error).message);
         } finally {
             setLoading(false);
         }
@@ -415,6 +364,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
 
     return (
         <div className="flex flex-col h-full border border-border rounded-xl bg-surface">
+            {requestError && <p role="alert" className="p-3 text-danger text-sm">{requestError}</p>}
             <div className="p-3 border-b border-border flex justify-between items-center">
                 <span className="font-semibold text-sm">AI Assistant</span>
                 <div className="flex gap-2">
@@ -435,7 +385,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                     </button>
                     <button
                         onClick={generatePlan}
-                        disabled={loading || isInteractionBlocked}
+                        disabled={!ready || loading || isInteractionBlocked}
                         className="btn-text text-xs px-2 py-1"
                         title="Generate Implementation Plan"
                     >
@@ -509,7 +459,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                     <button
                         key={qp.label}
                         onClick={() => sendQuickPrompt(qp.prompt)}
-                        disabled={loading || isInteractionBlocked}
+                        disabled={!ready || loading || isInteractionBlocked}
                         className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-2xl border border-border bg-background text-text-secondary transition-all duration-150
                             ${(loading || isInteractionBlocked)
                                 ? 'cursor-not-allowed opacity-50'
@@ -528,14 +478,14 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                     className="input"
                     value={input}
                     onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !loading && !isInteractionBlocked && sendMessage()}
+                    onKeyDown={e => e.key === 'Enter' && ready && !loading && !isInteractionBlocked && sendMessage()}
                     placeholder="Ask about your idea..."
-                    disabled={loading || isInteractionBlocked}
+                    disabled={!ready || loading || isInteractionBlocked}
                 />
                 <button
                     className="btn-primary flex items-center justify-center px-3"
                     onClick={sendMessage}
-                    disabled={loading || isInteractionBlocked || !input.trim()}
+                    disabled={!ready || loading || isInteractionBlocked || !input.trim()}
                 >
                     {loading ? '...' : <Send size={18} />}
                 </button>

@@ -1,11 +1,13 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { appSettingsTable, foldersTable, schema } from './schema.js';
-import { NotFoundError } from './errors.js';
-import { DEFAULT_APP_SETTINGS, type AppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventType, type VettingCriteria, type VettingResult } from '../src/types.js';
+import { AiConnectionError, NotFoundError } from './errors.js';
+import { DEFAULT_APP_SETTINGS, LEGACY_DEFAULT_APP_SETTINGS, type AppSettings, type LegacyAppSettings, type Folder, type Idea, type IdeaEvent, type IdeaEventType, type VettingCriteria, type VettingResult } from '../src/types.js';
+import { connectionInputSchema, type ConnectionInput, type StoredConnection } from './connections/contracts.js';
 import type { IdeaListQuery, UpdateIdeaInput } from './contracts.js';
 
 type SqliteDatabase = Database.Database;
@@ -70,6 +72,7 @@ type ExportPayload = {
   ideas: Idea[];
   folders: Folder[];
   settings: AppSettings;
+  connections: Array<ConnectionInput & { id: string }>;
 };
 
 type CountRow = {
@@ -187,6 +190,12 @@ export function initializeSchema(sqlite: SqliteDatabase): void {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ai_connections (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+      provider TEXT, model TEXT, base_url TEXT, cli_tool TEXT,
+      credential_ref TEXT, revision INTEGER NOT NULL DEFAULT 1,
+      tested_revision INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
   `);
 
   const ideaEventsColumns = sqlite.prepare('PRAGMA table_info(idea_events)').all() as Array<{ name: string }>;
@@ -209,7 +218,7 @@ export class AppStore {
   private readonly importTransaction: (payload: {
     ideas?: Idea[];
     folders?: Folder[];
-    settings?: Partial<AppSettings>;
+    settings?: Partial<LegacyAppSettings>;
   }) => void;
   private readonly saveIdeaTransaction: (idea: Idea, eventContext?: SaveIdeaEventContext) => Idea;
   private readonly deleteIdeaTransaction: (id: string, payload?: Record<string, unknown>) => void;
@@ -220,7 +229,7 @@ export class AppStore {
     this.importTransaction = this.sqlite.transaction((payload: {
       ideas?: Idea[];
       folders?: Folder[];
-      settings?: Partial<AppSettings>;
+      settings?: Partial<LegacyAppSettings>;
     }) => {
       for (const folder of payload.folders ?? []) {
         this.saveFolderSync(folder);
@@ -231,7 +240,7 @@ export class AppStore {
       }
 
       if (payload.settings) {
-        const current = this.getSettingsSync();
+        const current = this.getLegacySettingsSync();
         this.saveSettingsSync({
           ...current,
           ...payload.settings
@@ -336,13 +345,13 @@ export class AppStore {
     );
   }
 
-  private getSettingsSync(): AppSettings {
+  private getLegacySettingsSync(): LegacyAppSettings {
     const existing = this.sqlite.prepare(`
       SELECT provider, gemini_key, ollama_endpoint, ollama_model, cli_command_template
       FROM app_settings
       WHERE id = ?
     `).get('default') as {
-      provider: AppSettings['provider'];
+      provider: LegacyAppSettings['provider'];
       gemini_key: string;
       ollama_endpoint: string;
       ollama_model: string;
@@ -350,8 +359,7 @@ export class AppStore {
     } | undefined;
 
     if (!existing) {
-      this.saveSettingsSync(DEFAULT_APP_SETTINGS);
-      return DEFAULT_APP_SETTINGS;
+      return LEGACY_DEFAULT_APP_SETTINGS;
     }
 
     return {
@@ -363,7 +371,7 @@ export class AppStore {
     };
   }
 
-  private saveSettingsSync(settings: AppSettings): void {
+  private saveSettingsSync(settings: LegacyAppSettings): void {
     this.sqlite.prepare(`
       INSERT INTO app_settings (id, provider, gemini_key, ollama_endpoint, ollama_model, cli_command_template, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -816,11 +824,11 @@ export class AppStore {
   }
 
   async getSettings(): Promise<AppSettings> {
-    return this.getSettingsSync();
+    return { ...DEFAULT_APP_SETTINGS, activeConnectionId: this.getMetadata('active_ai_connection') };
   }
 
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
-    this.saveSettingsSync(settings);
+    this.setMetadata('active_ai_connection', settings.activeConnectionId ?? '');
     return settings;
   }
 
@@ -832,20 +840,134 @@ export class AppStore {
     ]);
 
     return {
-      version: 1,
+      version: 2,
       timestamp: Date.now(),
       ideas,
       folders,
-      settings
+      settings,
+      connections: this.listConnections().map(({ credentialRef: _ref, testedRevision: _tested, revision: _revision, ...input }) => input)
     };
   }
 
   async importData(payload: {
     ideas?: Idea[];
     folders?: Folder[];
-    settings?: Partial<AppSettings>;
+    settings?: Partial<LegacyAppSettings>;
   }): Promise<void> {
     this.importTransaction(payload);
+  }
+
+  getMetadata(key: string): string | null {
+    const row = this.sqlite.prepare('SELECT value FROM app_metadata WHERE key = ?').get(key) as MetadataRow | undefined;
+    return row?.value || null;
+  }
+  atomic<T>(fn: () => T): T {
+    try { return this.sqlite.transaction(fn)(); }
+    catch (error) {
+      if (/^SQLITE_BUSY/.test(String((error as { code?: string }).code)))
+        throw new AiConnectionError('AI_CONNECTION_CHANGED', 'The database changed during this operation. Retry with the current configuration.');
+      throw error;
+    }
+  }
+  importConnectionBackup(payload: { ideas?: Idea[]; folders?: Folder[]; connections: StoredConnection[] }): void {
+    this.atomic(() => {
+      this.importTransaction({ ideas: payload.ideas, folders: payload.folders });
+      for (const connection of payload.connections) {
+        if (!this.saveConnection(connection)) throw new Error(`Connection already exists: ${connection.id}`);
+      }
+    });
+  }
+  pendingCredentialCleanup(): string[] {
+    return (this.sqlite.prepare("SELECT value FROM app_metadata WHERE key LIKE 'credential_cleanup:%'").all() as MetadataRow[]).map(row => row.value);
+  }
+  journalCredentialCleanup(reference: string): void { this.setMetadata(`credential_cleanup:${reference}`, reference); }
+  completeCredentialCleanup(reference: string): void {
+    this.sqlite.prepare('DELETE FROM app_metadata WHERE key=?').run(`credential_cleanup:${reference}`);
+    this.releaseCredentialCleanup(reference);
+  }
+  releaseCredentialCleanup(reference: string): void {
+    this.sqlite.prepare('DELETE FROM app_metadata WHERE key=?').run(`credential_cleanup_owner:${reference}`);
+  }
+  isCredentialReferenced(reference: string): boolean {
+    return Boolean(this.sqlite.prepare('SELECT 1 FROM ai_connections WHERE credential_ref=? LIMIT 1').get(reference));
+  }
+  setMetadata(key: string, value: string): void {
+    this.sqlite.prepare('INSERT INTO app_metadata(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').run(key, value, Date.now());
+  }
+  getDatabaseIdentity(): string {
+    // INSERT OR IGNORE makes concurrent web and stdio initialization agree.
+    this.sqlite.prepare('INSERT OR IGNORE INTO app_metadata(key,value,updated_at) VALUES(?,?,?)').run('credential_namespace', randomUUID(), Date.now());
+    return this.getMetadata('credential_namespace')!;
+  }
+  getLegacySettings(): LegacyAppSettings { return this.getLegacySettingsSync(); }
+  saveLegacySettings(settings: LegacyAppSettings): void { this.saveSettingsSync(settings); }
+  clearLegacyKey(): void { this.sqlite.prepare("UPDATE app_settings SET gemini_key = '' WHERE id = 'default'").run(); }
+  listConnections(): StoredConnection[] {
+    const rows = this.sqlite.prepare('SELECT * FROM ai_connections ORDER BY created_at,id').all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id), revision: Number(row.revision),
+      credentialRef: row.credential_ref ? String(row.credential_ref) : null,
+      testedRevision: row.tested_revision === null ? null : Number(row.tested_revision),
+      ...connectionInputSchema.parse(row.kind === 'api'
+        ? { name: String(row.name), kind: 'api', provider: String(row.provider), model: String(row.model), ...(row.base_url ? { baseUrl: String(row.base_url) } : {}) }
+        : { name: String(row.name), kind: 'cli_proxy', tool: String(row.cli_tool), ...(row.model ? { model: String(row.model) } : {}) })
+    }));
+  }
+  getConnection(id: string): StoredConnection | undefined { return this.listConnections().find((connection) => connection.id === id); }
+  saveConnection(connection: StoredConnection): boolean {
+    return this.atomic(() => {
+      // Retain a revision floor after deletion so reusing an ID cannot produce an ABA match.
+      const revision = Math.max(connection.revision, Number(this.getMetadata(`connection_revision:${connection.id}`) ?? 0) + 1);
+      const result = this.sqlite.prepare(`INSERT OR IGNORE INTO ai_connections(id,name,kind,provider,model,base_url,cli_tool,credential_ref,revision,tested_revision,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      connection.id, connection.name, connection.kind, connection.kind === 'api' ? connection.provider : null,
+      connection.model ?? null, connection.kind === 'api' ? connection.baseUrl ?? null : null,
+      connection.kind === 'cli_proxy' ? connection.tool : null, connection.credentialRef, revision,
+      connection.testedRevision === connection.revision ? revision : null, Date.now(), Date.now());
+      return result.changes === 1;
+    });
+  }
+  updateConnection(connection: StoredConnection, expectedRevision: number): void {
+    if (connection.revision !== expectedRevision + 1) throw new Error('Connection revisions must increase by one.');
+    const result = this.sqlite.prepare(`UPDATE ai_connections SET name=?,kind=?,provider=?,model=?,base_url=?,cli_tool=?,credential_ref=?,revision=?,tested_revision=?,updated_at=? WHERE id=? AND revision=?`).run(
+      connection.name, connection.kind, connection.kind === 'api' ? connection.provider : null,
+      connection.model ?? null, connection.kind === 'api' ? connection.baseUrl ?? null : null,
+      connection.kind === 'cli_proxy' ? connection.tool : null, connection.credentialRef, connection.revision,
+      connection.testedRevision, Date.now(), connection.id, expectedRevision);
+    if (result.changes !== 1) throw new AiConnectionError('AI_CONNECTION_CHANGED', 'Connection changed. Retry with the current configuration.');
+  }
+  deleteConnection(id: string, expectedRevision?: number): void {
+    this.sqlite.transaction(() => {
+      const connection = this.getConnection(id);
+      const result = expectedRevision === undefined
+        ? this.sqlite.prepare('DELETE FROM ai_connections WHERE id=?').run(id)
+        : this.sqlite.prepare('DELETE FROM ai_connections WHERE id=? AND revision=?').run(id, expectedRevision);
+      if (expectedRevision !== undefined && result.changes !== 1) throw new AiConnectionError('AI_CONNECTION_CHANGED', 'Connection changed. Retry with the current configuration.');
+      if (connection && result.changes === 1) this.setMetadata(`connection_revision:${id}`, String(connection.revision + 1));
+      if (this.getMetadata('active_ai_connection') === id) this.setMetadata('active_ai_connection', '');
+    })();
+  }
+  restoreDeletedConnection(connection: StoredConnection, wasActive: boolean): boolean {
+    return this.atomic(() => {
+      // A recreated (even subsequently deleted) profile takes precedence over compensation.
+      if (this.getConnection(connection.id) || Number(this.getMetadata(`connection_revision:${connection.id}`)) !== connection.revision + 1) return false;
+      const revision = connection.revision + 2;
+      if (!this.saveConnection({ ...connection, revision, testedRevision: connection.testedRevision === connection.revision ? revision : null })) return false;
+      if (connection.credentialRef) this.completeCredentialCleanup(connection.credentialRef);
+      if (wasActive && !this.getMetadata('active_ai_connection')) this.setMetadata('active_ai_connection', connection.id);
+      return true;
+    });
+  }
+  markConnectionTested(id: string, revision: number): void {
+    const result = this.sqlite.prepare('UPDATE ai_connections SET tested_revision=? WHERE id=? AND revision=?').run(revision, id, revision);
+    if (result.changes !== 1) throw new AiConnectionError('AI_CONNECTION_CHANGED', 'Connection changed during the test. Test it again.');
+  }
+  activateTestedConnection(id: string): void {
+    this.sqlite.transaction(() => {
+      const connection = this.getConnection(id);
+      if (!connection || connection.testedRevision !== connection.revision) throw new AiConnectionError('AI_CONNECTION_UNTESTED', 'Test this connection before activating it.', 409);
+      this.setMetadata('active_ai_connection', id);
+    })();
   }
 
   async maybeMigrateLegacyJson(legacyPath: string): Promise<boolean> {

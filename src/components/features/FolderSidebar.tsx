@@ -9,6 +9,7 @@ interface FolderSidebarProps {
     onCreateFolder: (name: string) => void;
     onDeleteFolder: (folder_id: string) => void;
     onSmartOrganize: () => void;
+    aiDisabled?: boolean;
     onDropIdea: (folder_id: string, ideaId: string) => void;
     className?: string; // Allow customization of sidebar styles
 }
@@ -20,6 +21,7 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
     onCreateFolder,
     onDeleteFolder,
     onSmartOrganize,
+    aiDisabled = false,
     onDropIdea,
     className
 }) => {
@@ -109,6 +111,7 @@ export const FolderSidebar: React.FC<FolderSidebarProps> = ({
                     <div className="flex gap-1">
                         <button
                             onClick={onSmartOrganize}
+                            disabled={aiDisabled}
                             className="p-1 hover:bg-background rounded-md text-text-secondary hover:text-purple-500 transition-colors"
                             title="Auto-Organize with AI"
                         >

@@ -1,8 +1,9 @@
+import { useAiConnection } from '../context/AiConnectionContext';
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Layers } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, isStructuredParseError } from '../services/ai';
-import { Idea, AppSettings } from '../types';
+import { Idea } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { GeneratedIdeaCard } from '../components/GeneratedIdeaCard';
 import { StructuredAiFallback } from '../components/StructuredAiFallback';
@@ -15,17 +16,13 @@ export const Generator: React.FC = () => {
     const [error, setError] = useState<string>('');
     const [rawFallbackOutput, setRawFallbackOutput] = useState<string | null>(null);
     const [ideas, setIdeas] = useState<Idea[]>([]);
-    const [settings, setSettings] = useState<AppSettings | null>(null);
+    const { ready } = useAiConnection();
 
     useEffect(() => {
         const init = async () => {
             try {
-                const [loadedIdeas, loadedSettings] = await Promise.all([
-                    dbService.getAllIdeas(),
-                    dbService.getSettings()
-                ]);
+                const loadedIdeas = await dbService.getAllIdeas();
                 setIdeas(loadedIdeas);
-                setSettings(loadedSettings);
             } catch (e) {
                 setError('Failed to connect to database. Make sure the server is running.');
             }
@@ -34,7 +31,7 @@ export const Generator: React.FC = () => {
     }, []);
 
     const handleGenerate = async () => {
-        if (!settings) return;
+        if (!ready || loading) return;
         setLoading(true);
         setError('');
         setGeneratedIdeas([]);
@@ -53,7 +50,7 @@ export const Generator: React.FC = () => {
                 } else {
                     prompt = `${basePrompt}. ${criteria}`;
                 }
-                newIdeas = await aiService.generateIdeas(prompt, settings);
+                newIdeas = await aiService.generateIdeas(prompt);
             } else {
                 const titles = ideas.map(i => i.title).join(", ");
                 prompt = `
@@ -62,7 +59,7 @@ export const Generator: React.FC = () => {
                 Ensure these are viable and creative projects which lack a current existing alternative in the marketplace.
                 Explain the inspiration for each.
                 `;
-                newIdeas = await aiService.generateIdeas(prompt, settings);
+                newIdeas = await aiService.generateIdeas(prompt);
             }
 
             setGeneratedIdeas(newIdeas);
@@ -138,7 +135,7 @@ export const Generator: React.FC = () => {
                 <button
                     className="btn-primary w-full flex justify-center items-center gap-2"
                     onClick={handleGenerate}
-                    disabled={loading}
+                    disabled={!ready || loading}
                 >
                     {loading ? 'Thinking Deeply...' : 'Generate with AI'}
                     {!loading && <Sparkles size={18} />}
