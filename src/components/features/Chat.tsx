@@ -4,6 +4,7 @@ import { Send, FileText, Download, PlusCircle, Undo, Sparkles, Target, Puzzle, S
 import { Idea, ChatMessage } from '../../types';
 import { aiService } from '../../services/ai';
 import { v4 as uuidv4 } from 'uuid';
+import { createStreamBatcher, StreamBatcher } from './streamBatching';
 
 const QUICK_PROMPTS = [
     {
@@ -33,6 +34,8 @@ const QUICK_PROMPTS = [
     }
 ];
 
+const STREAM_UPDATE_INTERVAL_MS = 75;
+
 const escapeHtml = (unsafe: string) => {
     return unsafe
         .replace(/&/g, "&amp;")
@@ -49,8 +52,41 @@ interface ChatProps {
     interactionBlockedReason?: string | null;
 }
 
-export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, interactionBlockedReason }) => {
-    const STREAM_UPDATE_INTERVAL_MS = 75;
+const ChatMessageList = React.memo(({ messages, onAppendToNote, isInteractionBlocked }: {
+    messages: ChatMessage[];
+    onAppendToNote: (text: string) => void;
+    isInteractionBlocked: boolean;
+}) => (
+    <>
+        {messages.map(msg => (
+            <div key={msg.id}
+                className={`max-w-[80%] px-3 py-2 rounded-xl ${msg.role === 'user'
+                    ? 'self-end bg-accent text-white'
+                    : 'self-start bg-background text-text-primary'
+                    }`}
+            >
+                {msg.role !== 'user' && (
+                    <div className="flex justify-between items-center mb-1">
+                        <div className="text-[0.7rem] opacity-70">{msg.role === 'system' ? 'System' : 'AI'}</div>
+                        {msg.role === 'assistant' && (
+                            <button
+                                onClick={() => onAppendToNote(msg.content)}
+                                className="bg-transparent border-none p-0 cursor-pointer text-inherit opacity-60 hover:opacity-100"
+                                title="Save to Note"
+                                disabled={isInteractionBlocked}
+                            >
+                                <PlusCircle size={14} />
+                            </button>
+                        )}
+                    </div>
+                )}
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+            </div>
+        ))}
+    </>
+));
+
+const ChatComponent: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, interactionBlockedReason }) => {
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const { ready } = useAiConnection();
@@ -58,8 +94,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
     const bottomRef = useRef<HTMLDivElement>(null);
     const [isStreaming, setIsStreaming] = useState(false);
     const [streamingContent, setStreamingContent] = useState('');
-    const streamBufferRef = useRef('');
-    const streamUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const streamBatcherRef = useRef<StreamBatcher | null>(null);
     const activeStreamAbortRef = useRef<AbortController | null>(null);
     const isMountedRef = useRef(true);
     const isInteractionBlocked = Boolean(interactionBlockedReason);
@@ -76,43 +111,27 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         return maybeError.name === 'AbortError' || maybeError.message?.toLowerCase().includes('aborted') === true;
     };
 
+    if (!streamBatcherRef.current) {
+        streamBatcherRef.current = createStreamBatcher(
+            content => setStreamingContent(prev => prev + content),
+            STREAM_UPDATE_INTERVAL_MS
+        );
+    }
+
     const flushStreamBuffer = useCallback(() => {
-        if (streamUpdateTimerRef.current) {
-            clearTimeout(streamUpdateTimerRef.current);
-            streamUpdateTimerRef.current = null;
-        }
-
-        if (!streamBufferRef.current) return;
-
-        const buffered = streamBufferRef.current;
-        streamBufferRef.current = '';
-        setStreamingContent(prev => prev + buffered);
+        streamBatcherRef.current?.flush();
     }, []);
 
     const queueStreamChunk = useCallback((delta: string) => {
-        if (!delta) return;
-
-        streamBufferRef.current += delta;
-        if (streamUpdateTimerRef.current) return;
-
-        streamUpdateTimerRef.current = setTimeout(() => {
-            streamUpdateTimerRef.current = null;
-            if (!streamBufferRef.current) return;
-            const buffered = streamBufferRef.current;
-            streamBufferRef.current = '';
-            setStreamingContent(prev => prev + buffered);
-        }, STREAM_UPDATE_INTERVAL_MS);
-    }, [STREAM_UPDATE_INTERVAL_MS]);
+        streamBatcherRef.current?.push(delta);
+    }, []);
 
     useEffect(() => {
         isMountedRef.current = true;
         return () => {
             isMountedRef.current = false;
             activeStreamAbortRef.current?.abort();
-            if (streamUpdateTimerRef.current) {
-                clearTimeout(streamUpdateTimerRef.current);
-            }
-            streamBufferRef.current = '';
+            streamBatcherRef.current?.dispose();
         };
     }, []);
 
@@ -139,11 +158,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         setLoading(true);
         setIsStreaming(true);
         setStreamingContent('');
-        streamBufferRef.current = '';
-        if (streamUpdateTimerRef.current) {
-            clearTimeout(streamUpdateTimerRef.current);
-            streamUpdateTimerRef.current = null;
-        }
+        streamBatcherRef.current?.clear();
         let controller: AbortController | null = new AbortController();
         activeStreamAbortRef.current = controller;
 
@@ -178,11 +193,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                 setIsStreaming(false);
                 setStreamingContent('');
             }
-            streamBufferRef.current = '';
-            if (streamUpdateTimerRef.current) {
-                clearTimeout(streamUpdateTimerRef.current);
-                streamUpdateTimerRef.current = null;
-            }
+            streamBatcherRef.current?.clear();
         }
     };
 
@@ -231,11 +242,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         setLoading(true);
         setIsStreaming(true);
         setStreamingContent('');
-        streamBufferRef.current = '';
-        if (streamUpdateTimerRef.current) {
-            clearTimeout(streamUpdateTimerRef.current);
-            streamUpdateTimerRef.current = null;
-        }
+        streamBatcherRef.current?.clear();
         let controller: AbortController | null = new AbortController();
         activeStreamAbortRef.current = controller;
 
@@ -268,11 +275,7 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
                 setIsStreaming(false);
                 setStreamingContent('');
             }
-            streamBufferRef.current = '';
-            if (streamUpdateTimerRef.current) {
-                clearTimeout(streamUpdateTimerRef.current);
-                streamUpdateTimerRef.current = null;
-            }
+            streamBatcherRef.current?.clear();
         }
     };
 
@@ -312,10 +315,10 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         }
     };
 
-    const handleAppendToNoteClick = (text: string) => {
+    const handleAppendToNoteClick = useCallback((text: string) => {
         if (isInteractionBlocked) return;
         onAppendToNote(text);
-    };
+    }, [isInteractionBlocked, onAppendToNote]);
 
     const downloadChatPDF = () => {
         const printWindow = window.open('', '_blank');
@@ -404,31 +407,11 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-                {safeHistory.map(msg => (
-                    <div key={msg.id}
-                        className={`max-w-[80%] px-3 py-2 rounded-xl ${msg.role === 'user'
-                            ? 'self-end bg-accent text-white'
-                            : 'self-start bg-background text-text-primary'
-                            }`}
-                    >
-                        {msg.role !== 'user' && (
-                            <div className="flex justify-between items-center mb-1">
-                                <div className="text-[0.7rem] opacity-70">{msg.role === 'system' ? 'System' : 'AI'}</div>
-                                {msg.role === 'assistant' && (
-                                    <button
-                                        onClick={() => handleAppendToNoteClick(msg.content)}
-                                        className="bg-transparent border-none p-0 cursor-pointer text-inherit opacity-60 hover:opacity-100"
-                                        title="Save to Note"
-                                        disabled={isInteractionBlocked}
-                                    >
-                                        <PlusCircle size={14} />
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                        <div className="whitespace-pre-wrap">{msg.content}</div>
-                    </div>
-                ))}
+                <ChatMessageList
+                    messages={safeHistory}
+                    onAppendToNote={handleAppendToNoteClick}
+                    isInteractionBlocked={isInteractionBlocked}
+                />
                 {isStreaming && (
                     <div className="max-w-[80%] px-3 py-2 rounded-xl self-start bg-background text-text-primary">
                         <div className="flex justify-between items-center mb-1">
@@ -493,3 +476,5 @@ export const Chat: React.FC<ChatProps> = ({ idea, onChatUpdate, onAppendToNote, 
         </div>
     );
 };
+
+export const Chat = React.memo(ChatComponent);

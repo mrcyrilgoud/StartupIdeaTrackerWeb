@@ -10,6 +10,23 @@ import { dbService } from '../../services/db';
 import { StructuredAiFallback } from '../StructuredAiFallback';
 import { buildBrainstormFallbackIdea } from '../../../shared/structuredAiFallback';
 
+const HomeChatMessageList = React.memo(({ messages }: { messages: ChatMessage[] }) => (
+    <>
+        {messages.map(msg => (
+            <div key={msg.id}
+                className={`max-w-[85%] px-4 py-3 rounded-2xl leading-relaxed ${msg.role === 'user'
+                    ? 'self-end bg-accent text-white rounded-br-sm'
+                    : msg.role === 'system'
+                        ? 'self-center bg-red-50 text-red-600 border border-red-100 text-sm'
+                        : 'self-start bg-background text-text-primary border border-border rounded-bl-sm'
+                    }`}
+            >
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+            </div>
+        ))}
+    </>
+));
+
 export const HomeChat: React.FC = () => {
     const navigate = useNavigate();
     const [input, setInput] = useState('');
@@ -253,18 +270,7 @@ export const HomeChat: React.FC = () => {
                     </div>
 
                     <div className="h-[400px] overflow-y-auto p-6 flex flex-col gap-4">
-                        {history.map(msg => (
-                            <div key={msg.id}
-                                className={`max-w-[85%] px-4 py-3 rounded-2xl leading-relaxed ${msg.role === 'user'
-                                    ? 'self-end bg-accent text-white rounded-br-sm'
-                                    : msg.role === 'system'
-                                        ? 'self-center bg-red-50 text-red-600 border border-red-100 text-sm'
-                                        : 'self-start bg-background text-text-primary border border-border rounded-bl-sm'
-                                    }`}
-                            >
-                                <div className="whitespace-pre-wrap">{msg.content}</div>
-                            </div>
-                        ))}
+                        <HomeChatMessageList messages={history} />
                         {loading && (
                             <div className="self-start bg-background border border-border px-4 py-3 rounded-2xl rounded-bl-sm flex gap-1 items-center">
                                 <span className="dot-animate bg-text-secondary"></span>

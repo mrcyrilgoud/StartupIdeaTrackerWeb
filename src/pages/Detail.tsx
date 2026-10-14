@@ -6,6 +6,7 @@ import { dbService } from '../services/db';
 import { aiService } from '../services/ai';
 import { Idea, ChatMessage, IdeaEvent, IdeaEventDiff, STATUS_LABELS, STATUS_COLORS, StructuredAiFallbackPayload } from '../types';
 import { Chat } from '../components/features/Chat';
+import { createStreamBatcher, StreamBatcher } from '../components/features/streamBatching';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { OpenCodeModal } from '../components/OpenCodeModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
@@ -117,11 +118,29 @@ export const Detail: React.FC = () => {
     const viabilityStreamAbortRef = useRef<AbortController | null>(null);
     const competitorStreamAbortRef = useRef<AbortController | null>(null);
     const historySummaryAbortRef = useRef<AbortController | null>(null);
-    const viabilityStreamBufferRef = useRef('');
-    const competitorStreamBufferRef = useRef('');
-    const viabilityStreamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const competitorStreamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const historySummaryStreamBatcherRef = useRef<StreamBatcher | null>(null);
+    const viabilityStreamBatcherRef = useRef<StreamBatcher | null>(null);
+    const competitorStreamBatcherRef = useRef<StreamBatcher | null>(null);
     const isMountedRef = useRef(true);
+
+    if (!historySummaryStreamBatcherRef.current) {
+        historySummaryStreamBatcherRef.current = createStreamBatcher(
+            content => setHistorySummary(prev => prev + content),
+            STREAM_UPDATE_INTERVAL_MS
+        );
+    }
+    if (!viabilityStreamBatcherRef.current) {
+        viabilityStreamBatcherRef.current = createStreamBatcher(
+            content => setViabilityReport(prev => prev + content),
+            STREAM_UPDATE_INTERVAL_MS
+        );
+    }
+    if (!competitorStreamBatcherRef.current) {
+        competitorStreamBatcherRef.current = createStreamBatcher(
+            content => setCompetitorReport(prev => prev + content),
+            STREAM_UPDATE_INTERVAL_MS
+        );
+    }
 
     // Ref to track the latest idea state for debounced saving
     const latestIdeaRef = useRef<Idea | null>(null);
@@ -139,60 +158,20 @@ export const Detail: React.FC = () => {
     }, []);
 
     const flushViabilityStreamBuffer = useCallback(() => {
-        if (viabilityStreamTimerRef.current) {
-            clearTimeout(viabilityStreamTimerRef.current);
-            viabilityStreamTimerRef.current = null;
-        }
-
-        if (!viabilityStreamBufferRef.current) return;
-
-        const buffered = viabilityStreamBufferRef.current;
-        viabilityStreamBufferRef.current = '';
-        setViabilityReport(prev => prev + buffered);
+        viabilityStreamBatcherRef.current?.flush();
     }, []);
 
     const queueViabilityStreamChunk = useCallback((delta: string) => {
-        if (!delta) return;
-
-        viabilityStreamBufferRef.current += delta;
-        if (viabilityStreamTimerRef.current) return;
-
-        viabilityStreamTimerRef.current = setTimeout(() => {
-            viabilityStreamTimerRef.current = null;
-            if (!viabilityStreamBufferRef.current) return;
-            const buffered = viabilityStreamBufferRef.current;
-            viabilityStreamBufferRef.current = '';
-            setViabilityReport(prev => prev + buffered);
-        }, STREAM_UPDATE_INTERVAL_MS);
-    }, [STREAM_UPDATE_INTERVAL_MS]);
+        viabilityStreamBatcherRef.current?.push(delta);
+    }, []);
 
     const flushCompetitorStreamBuffer = useCallback(() => {
-        if (competitorStreamTimerRef.current) {
-            clearTimeout(competitorStreamTimerRef.current);
-            competitorStreamTimerRef.current = null;
-        }
-
-        if (!competitorStreamBufferRef.current) return;
-
-        const buffered = competitorStreamBufferRef.current;
-        competitorStreamBufferRef.current = '';
-        setCompetitorReport(prev => prev + buffered);
+        competitorStreamBatcherRef.current?.flush();
     }, []);
 
     const queueCompetitorStreamChunk = useCallback((delta: string) => {
-        if (!delta) return;
-
-        competitorStreamBufferRef.current += delta;
-        if (competitorStreamTimerRef.current) return;
-
-        competitorStreamTimerRef.current = setTimeout(() => {
-            competitorStreamTimerRef.current = null;
-            if (!competitorStreamBufferRef.current) return;
-            const buffered = competitorStreamBufferRef.current;
-            competitorStreamBufferRef.current = '';
-            setCompetitorReport(prev => prev + buffered);
-        }, STREAM_UPDATE_INTERVAL_MS);
-    }, [STREAM_UPDATE_INTERVAL_MS]);
+        competitorStreamBatcherRef.current?.push(delta);
+    }, []);
 
     const persistIdea = useCallback((ideaToSave: Idea, options?: RequestInit) => {
         latestIdeaRef.current = ideaToSave;
@@ -245,15 +224,9 @@ export const Detail: React.FC = () => {
             competitorStreamAbortRef.current?.abort();
             historySummaryAbortRef.current?.abort();
 
-            if (viabilityStreamTimerRef.current) {
-                clearTimeout(viabilityStreamTimerRef.current);
-            }
-            if (competitorStreamTimerRef.current) {
-                clearTimeout(competitorStreamTimerRef.current);
-            }
-
-            viabilityStreamBufferRef.current = '';
-            competitorStreamBufferRef.current = '';
+            historySummaryStreamBatcherRef.current?.dispose();
+            viabilityStreamBatcherRef.current?.dispose();
+            competitorStreamBatcherRef.current?.dispose();
         };
     }, []);
 
@@ -406,14 +379,16 @@ export const Detail: React.FC = () => {
         setHistorySummaryError(null);
         setHistorySummaryFallback(null);
         setHistorySummaryLoading(true);
+        historySummaryStreamBatcherRef.current?.clear();
 
         try {
             const result = await aiService.summarizeIdeaHistoryStream(
                 id,
                 { from: fromId, to: toId },
-                setHistorySummary,
+                content => historySummaryStreamBatcherRef.current?.push(content),
                 { signal: controller.signal }
             );
+            historySummaryStreamBatcherRef.current?.flush();
             setHistorySummary(result.fullText);
             if (result.fallback) {
                 setHistorySummaryFallback(result.fallback);
@@ -553,11 +528,7 @@ export const Detail: React.FC = () => {
             setViabilityError(null);
             setShowViabilityModal(true);
             setViabilityLoading(true);
-            viabilityStreamBufferRef.current = '';
-            if (viabilityStreamTimerRef.current) {
-                clearTimeout(viabilityStreamTimerRef.current);
-                viabilityStreamTimerRef.current = null;
-            }
+            viabilityStreamBatcherRef.current?.clear();
 
             controller = new AbortController();
             viabilityStreamAbortRef.current = controller;
@@ -598,11 +569,7 @@ export const Detail: React.FC = () => {
             setCompetitorError(null);
             setShowCompetitorModal(true);
             setCompetitorLoading(true);
-            competitorStreamBufferRef.current = '';
-            if (competitorStreamTimerRef.current) {
-                clearTimeout(competitorStreamTimerRef.current);
-                competitorStreamTimerRef.current = null;
-            }
+            competitorStreamBatcherRef.current?.clear();
 
             controller = new AbortController();
             competitorStreamAbortRef.current = controller;
@@ -635,11 +602,7 @@ export const Detail: React.FC = () => {
         flushViabilityStreamBuffer();
         viabilityStreamAbortRef.current?.abort();
         viabilityStreamAbortRef.current = null;
-        if (viabilityStreamTimerRef.current) {
-            clearTimeout(viabilityStreamTimerRef.current);
-            viabilityStreamTimerRef.current = null;
-        }
-        viabilityStreamBufferRef.current = '';
+        viabilityStreamBatcherRef.current?.clear();
         setViabilityLoading(false);
     }, [flushViabilityStreamBuffer]);
 
@@ -647,11 +610,7 @@ export const Detail: React.FC = () => {
         flushCompetitorStreamBuffer();
         competitorStreamAbortRef.current?.abort();
         competitorStreamAbortRef.current = null;
-        if (competitorStreamTimerRef.current) {
-            clearTimeout(competitorStreamTimerRef.current);
-            competitorStreamTimerRef.current = null;
-        }
-        competitorStreamBufferRef.current = '';
+        competitorStreamBatcherRef.current?.clear();
         setCompetitorLoading(false);
     }, [flushCompetitorStreamBuffer]);
 
