@@ -20,6 +20,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
     "@napi-rs/keyring": "^2.1.1",
+    "@tanstack/react-virtual": "^3.14.19",
     "better-sqlite3": "^11.8.1",
     "clsx": "^2.1.0",
     "drizzle-orm": "^0.44.2",

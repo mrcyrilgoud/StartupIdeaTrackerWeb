@@ -13,7 +13,7 @@ import * as fixtures from './e2e-fixtures/mock-proxy.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const lag = process.argv.includes('--lag');
 const output = path.join(root, 'output/playwright', `e2e-${lag ? 'lag' : 'thorough'}-${Date.now()}-${process.pid}`);
-const children = [], results = [], unexpected = [], expectedErrors = [], credentialRequests = [];
+const children = [], results = [], measurements = [], unexpected = [], expectedErrors = [], credentialRequests = [];
 let temp, proxy, browser, context, page, backend, origin, backendEnv, client, transport, current = 'startup', expectedFailure = false;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function poll(check, label, timeout = 15000) {
@@ -147,7 +147,8 @@ try {
       await goto('/generate'); await enabled(button('Generate with AI')); expectedFailure = true; proxy.state.failNext = true; const failed = page.waitForResponse(response => response.url().endsWith('/api/ai/generate-ideas') && response.status() === 502); await button('Generate with AI').click(); await failed; await visible(page.getByText(/Error:.*provider/i)); await enabled(button('Generate with AI')); await button('Generate with AI').click(); await visible(page.getByRole('heading', { name: 'E2E Generated Alpha', exact: true })); expectedFailure = false;
     });
     await scenario('home-summary-pagination-and-detail-navigation', async () => {
-      for (let index = 0; index < 51; index += 1) {
+      const syntheticCount = 251;
+      for (let index = 0; index < syntheticCount; index += 1) {
         await api('/api/ideas', 'POST', {
           id: `pagination-${index}`,
           title: `Pagination ${index}`,
@@ -160,28 +161,46 @@ try {
         });
       }
 
+      const initialRenderStarted = Date.now();
       await goto('/');
       const paginationHeadings = page.getByRole('heading', { name: /^Pagination / });
-      await visible(page.getByRole('heading', { name: 'Pagination 50', exact: true }));
+      await visible(page.getByRole('heading', { name: 'Pagination 250', exact: true }));
       await visible(button('Load more ideas'));
-      assert.equal(await paginationHeadings.count(), 50);
-      const loadMoreResponse = page.waitForResponse(response => response.url().includes('/api/idea-summaries') && response.url().includes('cursor='));
-      await button('Load more ideas').click();
-      const loadMorePayload = await (await loadMoreResponse).json();
-      assert.ok(loadMorePayload.items.some((idea) => idea.title === 'Pagination 0'));
-      await poll(async () => (await paginationHeadings.count()) >= 51, 'summary page appended');
-      assert.ok((await paginationHeadings.count()) >= 51);
+      const initialCardCount = await page.getByTestId('home-idea-card').count();
+      assert.ok(initialCardCount > 0 && initialCardCount < 50, `expected virtualized first page, got ${initialCardCount} cards`);
+      const initialRenderMs = Date.now() - initialRenderStarted;
+
+      let loadedCount = 50;
+      let finalLoadMorePayload;
+      while (loadedCount < syntheticCount) {
+        const loadMoreResponse = page.waitForResponse(response => response.url().includes('/api/idea-summaries') && response.url().includes('cursor='));
+        await button('Load more ideas').click();
+        finalLoadMorePayload = await (await loadMoreResponse).json();
+        loadedCount += finalLoadMorePayload.items.length;
+        await poll(async () => (await page.getByTestId('home-idea-card').count()) > 0, 'virtualized page appended');
+      }
+      assert.ok(finalLoadMorePayload.items.some((idea) => idea.title === 'Pagination 0'));
+
+      const scrollStarted = Date.now();
+      const scrollContainer = page.getByTestId('home-scroll-container');
+      await scrollContainer.evaluate((element) => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
+      await visible(page.getByRole('heading', { name: 'Pagination 0', exact: true }));
+      const scrollToLateIdeaMs = Date.now() - scrollStarted;
+      const mountedCardCount = await page.getByTestId('home-idea-card').count();
+      assert.ok(mountedCardCount < loadedCount, `expected bounded DOM, got ${mountedCardCount} mounted of ${loadedCount}`);
+      const usedJSHeapSize = await page.evaluate(() => performance.memory?.usedJSHeapSize ?? null);
+      measurements.push({ name: 'home-virtualization', loadedIdeas: loadedCount, mountedCards: mountedCardCount, initialRenderMs, scrollToLateIdeaMs, usedJSHeapSize, theoreticalUnvirtualizedCards: loadedCount });
 
       const search = page.getByPlaceholder('Search ideas...');
-      await search.fill('Pagination 50');
-      await visible(page.getByRole('heading', { name: 'Pagination 50', exact: true }));
+      await search.fill('Pagination 250');
+      await visible(page.getByRole('heading', { name: 'Pagination 250', exact: true }));
       assert.equal(await paginationHeadings.count(), 1);
       await search.fill('');
       await visible(button('Load more ideas'));
 
-      await page.getByRole('heading', { name: 'Pagination 50', exact: true }).click();
-      await page.waitForURL(/\/idea\/pagination-50$/);
-      assert.equal(await page.getByPlaceholder('Idea Title').inputValue(), 'Pagination 50');
+      await page.getByRole('heading', { name: 'Pagination 250', exact: true }).click();
+      await page.waitForURL(/\/idea\/pagination-250$/);
+      assert.equal(await page.getByPlaceholder('Idea Title').inputValue(), 'Pagination 250');
     });
   }
   assert.deepEqual(proxy.state.errors, [], 'mock contract errors'); assert.deepEqual(unexpected, [], 'unexpected browser errors'); assert.deepEqual(credentialRequests, [], 'no native Keychain credential requests'); console.log(`${results.length}/${results.length} scenarios passed; artifacts: ${output}`);
@@ -190,5 +209,5 @@ finally {
   await client?.close().catch(() => {}); await transport?.close().catch(() => {}); await context?.close().catch(() => {}); await browser?.close().catch(() => {});
   for (const child of children) if (child.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} }
   for (const child of children) { if (child.pid && child.exitCode === null) await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(2000)]); if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } await writeFile(path.join(output, `${child.logName}.log`), child.log); }
-  await proxy?.close(); await writeFile(path.join(output, 'results.json'), JSON.stringify({ mode: lag ? 'lag' : 'thorough', results, unexpected, expectedErrors, mockErrors: proxy?.state.errors, credentialRequests, limitations: ['API key forms only: native credential writes and real providers excluded.', 'Dynamic Vite/backend ports use reserve-release followed by strict bind.'] }, null, 2)); if (temp) await rm(temp, { recursive: true, force: true });
+  await proxy?.close(); await writeFile(path.join(output, 'results.json'), JSON.stringify({ mode: lag ? 'lag' : 'thorough', results, measurements, unexpected, expectedErrors, mockErrors: proxy?.state.errors, credentialRequests, limitations: ['API key forms only: native credential writes and real providers excluded.', 'Dynamic Vite/backend ports use reserve-release followed by strict bind.', 'Browser heap metrics are unavailable when performance.memory is not exposed.'] }, null, 2)); if (temp) await rm(temp, { recursive: true, force: true });
 }

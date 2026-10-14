@@ -1,10 +1,10 @@
 import { useAiConnection } from '../context/AiConnectionContext';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Search, Trash2, FolderOutput, LayoutGrid, Folder as FolderIcon, Menu, AlertTriangle } from 'lucide-react';
+import { Plus, Sparkles, Search, Menu, AlertTriangle } from 'lucide-react';
 import { dbService } from '../services/db';
 import { aiService, isStructuredParseError, MVPAnalysisResult } from '../services/ai';
-import { Idea, IdeaSummary, IdeaStatus, STATUS_COLORS, STATUS_LABELS, Folder, VettingResult, VettingCriteria } from '../types';
+import { Idea, IdeaSummary, IdeaStatus, STATUS_LABELS, Folder, VettingResult, VettingCriteria } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { MVPResultModal } from '../components/MVPResultModal';
 import { BusinessViabilityModal } from '../components/BusinessViabilityModal';
@@ -14,6 +14,7 @@ import { FolderSidebar } from '../components/features/FolderSidebar';
 import { MoveToFolderModal } from '../components/MoveToFolderModal';
 import { SmartOrganizeModal } from '../components/SmartOrganizeModal';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { VirtualIdeaBoard } from '../components/VirtualIdeaBoard';
 
 export const Home: React.FC = () => {
     const { ready } = useAiConnection();
@@ -547,17 +548,6 @@ export const Home: React.FC = () => {
             });
     }, [ideas, normalizedSearchQuery, statusFilter, selectedFolderId, sortOption, validFolderIds]);
 
-    const groupedIdeasByFolder = useMemo(() => {
-        if (selectedFolderId !== 'all') return null;
-        const groupedIdeas: Record<string, IdeaSummary[]> = {};
-        filteredIdeas.forEach((idea) => {
-            const folderId = (idea.folder_id && validFolderIds.has(idea.folder_id)) ? idea.folder_id : 'uncategorized';
-            if (!groupedIdeas[folderId]) groupedIdeas[folderId] = [];
-            groupedIdeas[folderId].push(idea);
-        });
-        return groupedIdeas;
-    }, [selectedFolderId, filteredIdeas, validFolderIds]);
-
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
     // ... existing code ...
@@ -596,6 +586,7 @@ export const Home: React.FC = () => {
             {/* Main Content Area - Scrollable */}
             <div
                 ref={mainContainerRef}
+                data-testid="home-scroll-container"
                 className="flex-1 overflow-y-auto h-full p-4 md:p-8 relative w-full"
                 onDragOver={(e) => {
                     e.preventDefault();
@@ -721,157 +712,22 @@ export const Home: React.FC = () => {
                         </div>
                     ) : (
                         <>
-                            {(() => {
-                                const renderIdeaCard = (idea: IdeaSummary) => (
-                                    <div
-                                        key={idea.id}
-                                        draggable={true}
-                                        onDragStart={(e) => handleDragStart(e, idea)}
-                                        className="card group relative flex flex-col h-full cursor-pointer overflow-hidden border-t-4 border-t-transparent hover:border-t-accent transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:cursor-grabbing"
-                                        onClick={(e) => {
-                                            if ((e.target as HTMLElement).closest('button')) return;
-                                            navigate(`/idea/${idea.id}`);
-                                        }}
-                                    >
-                                        <div className="flex justify-between items-start mb-3">
-                                            <h3 className="m-0 text-lg font-bold pr-2 text-text-primary leading-tight">{idea.title}</h3>
-                                            {idea.status && (
-                                                <span
-                                                    className="text-[10px] uppercase font-bold px-2 py-1 rounded-full whitespace-nowrap"
-                                                    style={{
-                                                        backgroundColor: `${STATUS_COLORS[idea.status]}20`,
-                                                        color: STATUS_COLORS[idea.status],
-                                                        border: `1px solid ${STATUS_COLORS[idea.status]}40`
-                                                    }}
-                                                >
-                                                    {STATUS_LABELS[idea.status]}
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        <p className="flex-1 text-text-secondary line-clamp-3 overflow-hidden text-sm leading-relaxed mb-4">
-                                            {idea.details || 'No details provided...'}
-                                        </p>
-
-                                        <div className="flex flex-wrap gap-2 mb-4">
-                                            {(idea.keywords || []).slice(0, 3).map((kw, idx) => (
-                                                <span key={idx} className="text-[10px] font-bold uppercase tracking-wider bg-accent/5 text-accent px-2 py-1 rounded-md border border-accent/10">
-                                                    {kw}
-                                                </span>
-                                            ))}
-                                        </div>
-
-                                        <div className="mt-auto pt-4 border-t border-border/50 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                                            <button
-                                                onClick={(e) => handleAnalyzeViability(e, idea)}
-                                                disabled={!ready}
-                                                className="flex-1 btn-text text-xs justify-center bg-background hover:bg-accent hover:text-white border border-border/50"
-                                            >
-                                                <Search size={14} /> Viability
-                                            </button>
-                                            <button
-                                                onClick={(e) => handleMoveStart(e, idea)}
-                                                className="btn-icon p-1.5 text-text-secondary hover:text-accent hover:bg-accent/10 rounded-lg transition-colors"
-                                                title="Move to Folder"
-                                            >
-                                                <FolderOutput size={16} />
-                                            </button>
-                                            <button
-                                                onClick={(e) => handleDeleteIdea(e, idea)}
-                                                className="btn-icon p-1.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
-                                                title="Delete this idea"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-
-                                if (selectedFolderId === 'all') {
-                                    const groupedIdeas = groupedIdeasByFolder || {};
-
-                                    return (
-                                        <div className="space-y-10">
-                                            {/* Render Folders First */}
-                                            {folders.map(folder => {
-                                                const folder_ideas = groupedIdeas[folder.id];
-                                                const isDragOver = dragOverFolderId === folder.id;
-
-                                                if ((!folder_ideas || folder_ideas.length === 0) && !isDragOver) return null;
-
-                                                return (
-                                                    <div
-                                                        key={folder.id}
-                                                        className={`animate-in fade-in slide-in-from-bottom-4 duration-500 rounded-xl transition-all ${isDragOver ? 'bg-accent/5 ring-2 ring-accent ring-inset p-4' : ''}`}
-                                                        onDragOver={(e) => handleDragOver(e, folder.id)}
-                                                        onDragLeave={handleDragLeave}
-                                                        onDrop={(e) => handleGroupDrop(e, folder.id)}
-                                                    >
-                                                        <div className="flex items-center gap-2 mb-4 text-text-secondary border-b border-border/50 pb-2">
-                                                            <FolderIcon size={20} className={isDragOver ? "text-accent" : "text-accent"} />
-                                                            <h3 className="text-xl font-bold text-text-primary">{folder.name}</h3>
-                                                            <span className="text-xs bg-accent/10 text-accent px-2 py-0.5 rounded-full font-bold">
-                                                                {folder_ideas ? folder_ideas.length : 0}
-                                                            </span>
-                                                            {isDragOver && (
-                                                                <span className="ml-auto text-xs text-accent font-bold animate-pulse">
-                                                                    Drop to move here
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full px-1">
-                                                            {folder_ideas && folder_ideas.map(renderIdeaCard)}
-                                                            {isDragOver && (!folder_ideas || folder_ideas.length === 0) && (
-                                                                <div className="h-32 border-2 border-dashed border-accent/30 rounded-lg flex items-center justify-center text-accent/50 text-sm">
-                                                                    Drop idea here
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-
-                                            {/* Render Uncategorized */}
-                                            {(groupedIdeas['uncategorized'] && groupedIdeas['uncategorized'].length > 0) || dragOverFolderId === 'uncategorized' ? (
-                                                <div
-                                                    className={`animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100 rounded-xl transition-all ${dragOverFolderId === 'uncategorized' ? 'bg-accent/5 ring-2 ring-accent ring-inset p-4' : ''}`}
-                                                    onDragOver={(e) => handleDragOver(e, 'uncategorized')}
-                                                    onDragLeave={handleDragLeave}
-                                                    onDrop={(e) => handleGroupDrop(e, 'uncategorized')}
-                                                >
-                                                    <div className="flex items-center gap-2 mb-4 text-text-secondary border-b border-border/50 pb-2">
-                                                        <LayoutGrid size={20} />
-                                                        <h3 className="text-xl font-bold text-text-primary">Uncategorized</h3>
-                                                        <span className="text-xs bg-text-secondary/10 text-text-secondary px-2 py-0.5 rounded-full font-bold">
-                                                            {groupedIdeas['uncategorized'] ? groupedIdeas['uncategorized'].length : 0}
-                                                        </span>
-                                                        {dragOverFolderId === 'uncategorized' && (
-                                                            <span className="ml-auto text-xs text-accent font-bold animate-pulse">
-                                                                Drop to remove from folder
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full px-1">
-                                                        {groupedIdeas['uncategorized'] && groupedIdeas['uncategorized'].map(renderIdeaCard)}
-                                                        {dragOverFolderId === 'uncategorized' && (!groupedIdeas['uncategorized'] || groupedIdeas['uncategorized'].length === 0) && (
-                                                            <div className="h-32 border-2 border-dashed border-accent/30 rounded-lg flex items-center justify-center text-accent/50 text-sm">
-                                                                Drop idea here
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ) : null}
-                                        </div>
-                                    );
-                                }
-
-                                // Default Grid View
-                                return (
-                                    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 w-full">
-                                        {filteredIdeas.map(renderIdeaCard)}
-                                    </div>
-                                );
-                            })()}
+                            <VirtualIdeaBoard
+                                ideas={filteredIdeas}
+                                folders={folders}
+                                selectedFolderId={selectedFolderId}
+                                dragOverFolderId={dragOverFolderId}
+                                scrollElementRef={mainContainerRef}
+                                resetKey={`${searchQuery}|${statusFilter}|${selectedFolderId}|${sortOption}`}
+                                onDragStart={handleDragStart}
+                                onDragOver={handleDragOver}
+                                onDragLeave={handleDragLeave}
+                                onDrop={handleGroupDrop}
+                                onAnalyzeViability={handleAnalyzeViability}
+                                onMoveStart={handleMoveStart}
+                                onDeleteIdea={handleDeleteIdea}
+                                onNavigate={(ideaId) => navigate(`/idea/${ideaId}`)}
+                            />
                         </>
                     )}
 
