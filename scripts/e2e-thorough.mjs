@@ -14,7 +14,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const lag = process.argv.includes('--lag');
 const output = path.join(root, 'output/playwright', `e2e-${lag ? 'lag' : 'thorough'}-${Date.now()}-${process.pid}`);
 const children = [], results = [], measurements = [], unexpected = [], expectedErrors = [], credentialRequests = [];
-let temp, proxy, browser, context, page, backend, origin, backendEnv, client, transport, current = 'startup', expectedFailure = false;
+let temp, proxy, browser, context, page, backend, origin, backendEnv, client, transport, current = 'startup', expectedFailure = false, failProxyTools = false;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function poll(check, label, timeout = 15000) {
   const deadline = Date.now() + timeout; let last;
@@ -52,12 +52,15 @@ async function scenario(name, run) {
   catch (error) { results.push({ name, passed: false, error: error.stack }); throw error; }
 }
 async function sendChat(text) { const input = page.getByPlaceholder('Ask about your idea...'); await enabled(input); await input.fill(text); await input.press('Enter'); }
-async function connectionRow(name = 'E2E Codex') { const row = page.locator('section[aria-label="AI connections"] .border.rounded-lg').filter({ has: page.getByText(new RegExp(`^${name}( · Active)?$`)) }); await visible(row); return row; }
+async function connectionRow(name = 'E2E Codex') { const row = page.locator('section[aria-label="AI connections"] .border.rounded-lg').filter({ has: page.getByText(name, { exact: true }) }); await visible(row); return row; }
 async function testAndActivate(row) {
   const test = row.getByRole('button', { name: 'Test', exact: true }); await enabled(test); await test.click();
   await visible(page.getByText('Connection test passed. You can now make it active.', { exact: true }));
-  const active = row.getByRole('button', { name: 'Make active', exact: true }); if (await active.isEnabled()) await active.click();
+  const active = row.getByRole('button', { name: 'Make active', exact: true });
+  if (await active.count()) { await enabled(active); await active.click(); }
   await visible(page.getByText('AI status: configured', { exact: true }));
+  await visible(row.getByLabel('Active connection'));
+  assert.equal(await row.getByRole('button', { name: 'Make active', exact: true }).count(), 0);
 }
 try {
   await mkdir(output, { recursive: true }); temp = await mkdtemp(path.join(tmpdir(), 'startup-e2e-')); proxy = await fixtures.startMockProxy();
@@ -68,22 +71,56 @@ try {
   start('vite', process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'], { VITE_BACKEND_TARGET: backend });
   await poll(async () => (await fetch(origin)).ok, 'Vite readiness');
   browser = await chromium.launch({ headless: true }); context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, acceptDownloads: true }); page = await context.newPage(); page.setDefaultTimeout(15000);
-  page.on('console', message => { if (message.type() !== 'error') return; const entry = { scenario: current, text: message.text() }; if (expectedFailure && /Failed to load resource.*502/.test(entry.text)) expectedErrors.push(entry); else unexpected.push(entry); });
+  await page.route('**/api/ai/proxy-tools', async route => {
+    if (failProxyTools) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'E2E proxy unavailable' }) });
+      return;
+    }
+    await route.continue();
+  });
+  page.on('console', message => { if (message.type() !== 'error') return; const entry = { scenario: current, text: message.text() }; if (expectedFailure && /Failed to load resource.*50[23]/.test(entry.text)) expectedErrors.push(entry); else unexpected.push(entry); });
   page.on('pageerror', error => unexpected.push({ scenario: current, text: error.stack }));
   page.on('request', request => { if (/\/credential$/.test(request.url())) credentialRequests.push(request.url()); });
   await scenario('fresh-setup-and-api-draft', async () => {
     assert.deepEqual(await api('/api/ai/connections'), []); assert.equal((await api('/api/settings')).activeConnectionId, null);
     await goto('/'); await visible(page.getByRole('complementary', { name: 'AI setup' }).first()); await button('Continue without AI').first().click();
     await button('New Idea').click(); await page.waitForURL(/\/idea\/.+/); assert.equal(await page.getByPlaceholder('Ask about your idea...').isEnabled(), false);
-    await goto('/settings'); await enabled(button('Save connection')); await page.getByLabel('Name', { exact: true }).fill('E2E API Draft'); await page.getByLabel('Model', { exact: true }).fill('explicit-e2e-model');
-    const key = page.getByLabel(/API key/); assert.equal(await key.getAttribute('type'), 'password'); await key.fill('NOT-A-SECRET-FORM-ONLY'); await key.fill(''); await button('Save connection').click(); await visible(page.getByText(/Connection saved\. Test it/));
+    await goto('/settings');
+    assert.equal(await page.getByLabel('Name', { exact: true }).count(), 0, 'connection form is collapsed initially');
+    const newConnection = button('New connection'); await visible(newConnection); await newConnection.click();
+    await visible(page.getByRole('heading', { name: 'Add connection', exact: true }));
+    const nameField = page.getByLabel('Name', { exact: true }); await visible(nameField);
+    await poll(() => nameField.evaluate(element => element === document.activeElement), 'New connection focuses Name');
+    await nameField.fill('E2E API Draft'); await page.getByLabel('Model', { exact: true }).fill('explicit-e2e-model');
+    assert.equal(await button('Create connection').count(), 1); assert.equal(await button('Save connection').count(), 0);
+    const key = page.getByLabel(/API key/); assert.equal(await key.getAttribute('type'), 'password'); await key.fill('NOT-A-SECRET-FORM-ONLY'); await key.fill(''); await button('Create connection').click(); await visible(page.getByText(/Connection saved\. Test it/));
+    await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); assert.equal(await button('Save changes').count(), 1); assert.equal(await button('Cancel').count(), 1);
+    const apiTypeSelect = page.locator('label').filter({ hasText: /^Connection type/ }).locator('select'); const apiProviderSelect = page.locator('label').filter({ hasText: /^Provider/ }).locator('select');
+    assert.equal(await apiTypeSelect.isDisabled(), true); assert.equal(await apiProviderSelect.isDisabled(), true);
     const draft = (await api('/api/ai/connections')).find(connection => connection.name === 'E2E API Draft'); assert.equal(draft.model, 'explicit-e2e-model'); assert.equal(draft.hasKey, false); assert.equal((await api('/api/settings')).activeConnectionId, null);
   });
   let connectionId, manualId;
   await scenario('http-connection-contract-and-ui-activation', async () => {
     const connection = await api('/api/ai/connections', 'POST', { kind: 'cli_proxy', tool: 'codex', name: 'E2E Codex' }); connectionId = connection.id;
     assert.deepEqual(await api(`/api/ai/connections/${connectionId}/test`, 'POST', {}), { ok: true }); await api('/api/settings', 'PUT', { activeConnectionId: connectionId }); await api('/api/settings', 'PUT', { activeConnectionId: null });
-    await page.reload(); const row = await connectionRow(); await row.getByRole('button', { name: 'Edit', exact: true }).click(); await page.getByLabel('Model (optional)').fill('e2e-cli-model'); await button('Save connection').click(); await visible(page.getByText(/Connection saved\. Test it/)); await testAndActivate(row);
+    await page.reload(); const row = await connectionRow(); await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); await visible(page.getByText('Provider and connection type are locked after creation. To change either, create a new connection.', { exact: true }));
+    assert.equal(await page.locator('label').filter({ hasText: /^Connection type/ }).locator('select').isDisabled(), true); assert.equal(await page.locator('label').filter({ hasText: /^Provider/ }).locator('select').count(), 0);
+    await page.getByLabel('Model (optional)').fill('e2e-cli-model'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/)); await testAndActivate(row);
+    await button('Cancel').click(); await gone(page.getByRole('heading', { name: 'Edit connection', exact: true }));
+  });
+  await scenario('settings-cli-proxy-retry-preserves-draft', async () => {
+    failProxyTools = true; expectedFailure = true;
+    try {
+      await goto('/settings');
+      const section = page.locator('section[aria-label="AI connections"]'); await visible(section);
+      await button('New connection').click(); await visible(page.getByRole('heading', { name: 'Add connection', exact: true }));
+      await page.getByLabel('Name', { exact: true }).fill('CLI Retry Draft'); await page.locator('label').filter({ hasText: /^Connection type/ }).locator('select').selectOption('cli_proxy');
+      const toolsAlert = page.getByRole('alert').filter({ hasText: 'CLI tools unavailable' }); await visible(toolsAlert); failProxyTools = false; expectedFailure = false;
+      await toolsAlert.getByRole('button', { name: 'Retry', exact: true }).click(); await gone(toolsAlert);
+      await poll(() => page.getByLabel('Tool').inputValue().then(value => value === 'codex'), 'CLI tool retry result');
+      assert.equal(await page.getByLabel('Name', { exact: true }).inputValue(), 'CLI Retry Draft', 'CLI retry preserves the draft name');
+    } finally { failProxyTools = 0; expectedFailure = false; }
   });
   await scenario('manual-idea-persistence', async () => {
     await goto('/'); await button('New Idea').click(); await page.waitForURL(/\/idea\/.+/); manualId = page.url().split('/').at(-1); await page.getByPlaceholder('Idea Title').fill('E2E Manual Idea'); await page.getByPlaceholder('Describe your idea in detail...').fill('E2E isolated SQLite workflow details.');
@@ -122,9 +159,28 @@ try {
       await goto(`/idea/${manualId}`); await enabled(button('Summarize selected range')); await button('Summarize selected range').click(); await visible(page.getByRole('heading', { name: 'Current state', exact: true })); await enabled(button('Summarize selected range')); assert.ok(proxy.state.requests.some(request => request.prompt.includes('Events are ordered oldest to newest.')));
     });
     await scenario('connection-edit-invalidates-and-retest', async () => {
-      await goto('/settings'); const row = await connectionRow(); await row.getByRole('button', { name: 'Edit', exact: true }).click(); await page.getByLabel('Model (optional)').fill('e2e-changed-model'); await button('Save connection').click(); await visible(page.getByText(/Connection saved\. Test it/)); assert.equal((await api('/api/ai/status')).state, 'needs_setup');
+      await goto('/settings'); const row = await connectionRow(); await row.getByRole('button', { name: 'Edit', exact: true }).click(); await page.getByLabel('Model (optional)').fill('e2e-changed-model'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/)); assert.equal((await api('/api/ai/status')).state, 'needs_setup');
       await goto(`/idea/${manualId}`); await visible(page.getByRole('complementary', { name: 'AI setup' }).first()); assert.equal(await page.getByPlaceholder('Ask about your idea...').isEnabled(), false);
-      await goto('/settings'); const restored = await connectionRow(); await restored.getByRole('button', { name: 'Edit', exact: true }).click(); await page.getByLabel('Model (optional)').fill('e2e-cli-model'); await button('Save connection').click(); await visible(page.getByText(/Connection saved\. Test it/)); await testAndActivate(restored);
+      await goto('/settings'); const restored = await connectionRow(); await restored.getByRole('button', { name: 'Edit', exact: true }).click(); await page.getByLabel('Model (optional)').fill('e2e-cli-model'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/)); await testAndActivate(restored);
+    });
+    await scenario('settings-mobile-connection-layout', async () => {
+      const longName = 'E2E Mobile Connection With A Deliberately Long Name';
+      await api('/api/ai/connections', 'POST', { kind: 'api', provider: 'ollama', name: longName, model: 'llama3' });
+      await page.setViewportSize({ width: 390, height: 844 }); await goto('/settings');
+      const row = await connectionRow(longName); const name = page.getByText(longName, { exact: true }); await visible(name);
+      const layout = await page.evaluate(() => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth, mainWidth: document.querySelector('main')?.scrollWidth ?? 0, mainClientWidth: document.querySelector('main')?.clientWidth ?? 0 }));
+      assert.ok(layout.documentWidth <= layout.viewportWidth + 1, `mobile document overflows horizontally: ${JSON.stringify(layout)}`);
+      assert.ok(layout.mainWidth <= layout.mainClientWidth + 1, `mobile main overflows horizontally: ${JSON.stringify(layout)}`);
+      const textMetrics = await name.evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); const rects = [...range.getClientRects()]; return { lines: rects.length, widestLine: Math.max(...rects.map(rect => rect.width)) }; });
+      assert.ok(textMetrics.lines <= 3, `connection name wraps into too many lines: ${JSON.stringify(textMetrics)}`); assert.ok(textMetrics.widestLine > 80, `connection name appears character-wrapped: ${JSON.stringify(textMetrics)}`);
+      assert.ok(await row.getByRole('button', { name: 'Edit', exact: true }).isVisible()); assert.ok(await row.getByRole('button', { name: 'Test', exact: true }).isVisible());
+      await page.setViewportSize({ width: 1440, height: 1100 });
+    });
+    await scenario('settings-backup-controls', async () => {
+      await goto('/settings'); const importControl = page.getByRole('button', { name: 'Import Backup', exact: true }); await visible(importControl);
+      assert.ok(await importControl.getAttribute('class').then(value => value?.includes('btn-secondary'))); await importControl.focus(); assert.equal(await importControl.evaluate(element => element === document.activeElement), true);
+      const chooser = page.waitForEvent('filechooser'); await page.keyboard.press('Enter'); await chooser;
+      const downloaded = page.waitForEvent('download'); await button('Export Backup').click(); const download = await downloaded; const backupPath = path.join(output, 'backup-regression.json'); await download.saveAs(backupPath); const raw = await readFile(backupPath, 'utf8'); const backup = JSON.parse(raw); assert.equal(backup.settings.version, 2); assert.ok(!/apiKey|geminiKey|credentialRef|NOT-A-SECRET/.test(raw));
     });
     await scenario('credential-free-backup', async () => {
       const downloaded = page.waitForEvent('download'); await button('Export Backup').click(); const download = await downloaded; const backupPath = path.join(output, 'backup.json'); await download.saveAs(backupPath); const raw = await readFile(backupPath, 'utf8'); const backup = JSON.parse(raw); assert.ok(backup.ideas.length > 0); assert.equal(backup.settings.version, 2); assert.ok(!/apiKey|geminiKey|credentialRef|NOT-A-SECRET/.test(raw)); assert.deepEqual(credentialRequests, []);
