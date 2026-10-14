@@ -31,6 +31,8 @@ type IdeaSummaryCursor = {
   id: string;
 };
 
+type IdeaBase = Pick<Idea, 'id' | 'title' | 'details' | 'analysis' | 'timestamp' | 'status' | 'folder_id'>;
+
 type FolderRow = {
   id: string;
   name: string;
@@ -247,6 +249,7 @@ export class AppStore {
     settings?: Partial<LegacyAppSettings>;
   }) => void;
   private readonly saveIdeaTransaction: (idea: Idea, eventContext?: SaveIdeaEventContext) => Idea;
+  private readonly appendIdeaChatTransaction: (id: string, patch: UpdateIdeaInput) => Idea;
   private readonly deleteIdeaTransaction: (id: string, payload?: Record<string, unknown>) => void;
 
   constructor(sqlite: SqliteDatabase) {
@@ -288,6 +291,62 @@ export class AppStore {
       if (eventContext && eventContext.type !== mutationType) {
         this.insertIdeaEventSync(snapshot.id, eventContext.type, eventContext.payload ?? {}, snapshot);
       }
+      return snapshot;
+    });
+    this.appendIdeaChatTransaction = this.sqlite.transaction((id: string, patch: UpdateIdeaInput) => {
+      const existing = this.getIdeaBaseSync(id);
+      if (!existing) {
+        throw new NotFoundError(`Idea ${id} not found`);
+      }
+
+      const nextFolderId = patch.folder_id === null ? null : (patch.folder_id ?? existing.folder_id ?? null);
+      const nextTimestamp = patch.timestamp ?? existing.timestamp;
+      this.sqlite.prepare(`
+        UPDATE ideas
+        SET title = ?, details = ?, analysis = ?, status = ?, folder_id = ?,
+            created_at = MIN(created_at, ?), updated_at = ?
+        WHERE id = ?
+      `).run(
+        patch.title ?? existing.title,
+        patch.details ?? existing.details,
+        patch.analysis ?? existing.analysis ?? null,
+        patch.status ?? existing.status,
+        nextFolderId,
+        nextTimestamp,
+        Date.now(),
+        id
+      );
+
+      const chatInsert = this.sqlite.prepare(`
+        INSERT INTO idea_chat_messages (id, idea_id, role, content, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const message of patch.chatAppend ?? []) {
+        chatInsert.run(message.id, id, message.role, message.content, message.timestamp);
+      }
+
+      const snapshot = this.getIdeaSync(id);
+      if (!snapshot) {
+        throw new Error(`Failed to reload idea ${id} after chat append`);
+      }
+
+      const mutationType: IdeaEventType = existing.folder_id !== snapshot.folder_id ? 'idea_moved' : 'idea_updated';
+      const mutationPayload = mutationType === 'idea_moved'
+        ? {
+            fromFolderId: existing.folder_id ?? null,
+            toFolderId: snapshot.folder_id ?? null
+          }
+        : {
+            updatedFields: [
+              ...(patch.title !== undefined ? ['title'] : []),
+              ...(patch.details !== undefined ? ['details'] : []),
+              ...(patch.analysis !== undefined ? ['analysis'] : []),
+              ...(patch.status !== undefined ? ['status'] : []),
+              ...(patch.chatAppend !== undefined ? ['chatHistory'] : []),
+              ...(patch.folder_id !== undefined ? ['folder_id'] : [])
+            ]
+          };
+      this.insertIdeaEventSync(snapshot.id, mutationType, mutationPayload, snapshot);
       return snapshot;
     });
     this.deleteIdeaTransaction = this.sqlite.transaction((id: string, payload?: Record<string, unknown>) => {
@@ -521,6 +580,28 @@ export class AppStore {
     }
 
     return this.hydrateIdeas([row])[0];
+  }
+
+  private getIdeaBaseSync(id: string): IdeaBase | undefined {
+    const row = this.sqlite.prepare(`
+      SELECT id, title, details, analysis, status, folder_id, created_at, updated_at
+      FROM ideas
+      WHERE id = ?
+    `).get(id) as IdeaRow | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: row.id,
+      title: row.title,
+      details: row.details,
+      analysis: row.analysis ?? undefined,
+      timestamp: row.created_at,
+      status: row.status,
+      folder_id: row.folder_id ?? undefined
+    };
   }
 
   private deriveIdeaSaveEventType(previous: Idea | undefined, next: Idea): IdeaEventType {
@@ -797,6 +878,17 @@ export class AppStore {
   }
 
   async updateIdea(id: string, patch: UpdateIdeaInput): Promise<Idea> {
+    if (
+      patch.chatAppend !== undefined
+      && patch.chatHistory === undefined
+      && patch.keywords === undefined
+      && patch.relatedIdeas === undefined
+      && patch.vetting === undefined
+      && patch.vettingMerge === undefined
+    ) {
+      return this.appendIdeaChatTransaction(id, patch);
+    }
+
     const existing = await this.getIdea(id);
     if (!existing) {
       throw new NotFoundError(`Idea ${id} not found`);

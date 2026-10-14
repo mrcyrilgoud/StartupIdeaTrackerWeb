@@ -241,7 +241,9 @@ export function createIdeaMcpServer(store: AppStore, aiService: BackendAiService
     let updatedIdea = idea;
     if (persist) {
       updatedIdea = await store.updateIdea(ideaId, {
-        chatHistory: [...baseHistory, userMessage, assistantMessage]
+        chatAppend: idea.chatHistory.length === baseHistory.length
+          ? [userMessage, assistantMessage]
+          : [assistantMessage]
       });
     }
 

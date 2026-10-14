@@ -75,6 +75,81 @@ test('idea event snapshots survive after the live idea row is deleted', async ()
   assert.equal(persistedEvent.ideaId, 'idea-1');
 });
 
+test('chat append preserves the full history and event snapshot while avoiding relation rewrites', async () => {
+  const history = Array.from({ length: 120 }, (_, index) => ({
+    id: `message-${index}`,
+    role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+    content: `Message ${index}`,
+    timestamp: index + 1
+  }));
+  const appendStore = createStore();
+  const fullPatchStore = createStore();
+  const idea = makeIdea({ chatHistory: history });
+  await appendStore.saveIdea(idea);
+  await fullPatchStore.saveIdea(idea);
+
+  const appendSqlite = (appendStore as unknown as { sqlite: Database.Database }).sqlite;
+  const fullPatchSqlite = (fullPatchStore as unknown as { sqlite: Database.Database }).sqlite;
+  const appendChangesBefore = appendSqlite.prepare('SELECT total_changes() AS count').get() as { count: number };
+  const fullChangesBefore = fullPatchSqlite.prepare('SELECT total_changes() AS count').get() as { count: number };
+  const nextMessage = {
+    id: 'message-120',
+    role: 'assistant' as const,
+    content: 'Appended response',
+    timestamp: 121
+  };
+
+  const appended = await appendStore.updateIdea('idea-1', { chatAppend: [nextMessage] });
+  const fullPatched = await fullPatchStore.updateIdea('idea-1', { chatHistory: [...history, nextMessage] });
+  const appendChangesAfter = appendSqlite.prepare('SELECT total_changes() AS count').get() as { count: number };
+  const fullChangesAfter = fullPatchSqlite.prepare('SELECT total_changes() AS count').get() as { count: number };
+
+  assert.deepEqual(appended.chatHistory, fullPatched.chatHistory);
+  assert.equal(appended.chatHistory.length, 121);
+  assert.equal((await appendStore.listIdeaEvents('idea-1', { limit: 1 }))[0].snapshot.chatHistory.length, 121);
+  assert.ok(appendChangesAfter.count - appendChangesBefore.count < fullChangesAfter.count - fullChangesBefore.count);
+});
+
+test('concurrent chat appends are serialized without losing either response', async () => {
+  const store = createStore();
+  await store.saveIdea(makeIdea());
+
+  await Promise.all([
+    store.updateIdea('idea-1', { chatAppend: [{ id: 'message-a', role: 'assistant', content: 'A', timestamp: 1 }] }),
+    store.updateIdea('idea-1', { chatAppend: [{ id: 'message-b', role: 'assistant', content: 'B', timestamp: 2 }] })
+  ]);
+
+  assert.deepEqual((await store.getIdea('idea-1'))?.chatHistory.map((message) => message.id), ['message-a', 'message-b']);
+});
+
+test('MCP idea chat persists only the new exchange through the append contract', async () => {
+  const store = createStore();
+  await store.saveIdea(makeIdea({
+    chatHistory: [{ id: 'existing', role: 'user', content: 'Existing prompt', timestamp: 1 }]
+  }));
+  const mcpServer = createIdeaMcpServer(store, {
+    brainstorm: async () => '',
+    summarizeIdeaFromChat: async () => ({ title: '', details: '' }),
+    chat: async (_prompt, history) => `history:${history.length}`,
+    generateIdeas: async () => [],
+    extractKeywords: async () => [],
+    generateViabilityReport: async () => '',
+    analyzeCompetitors: async () => '',
+    findSimplestMVP: async () => [],
+    vetIdeas: async () => [],
+    suggestFolders: async () => [],
+    summarizeIdeaHistoryStream: async () => ''
+  } as never);
+
+  const chatTool = (mcpServer as unknown as {
+    _registeredTools: Record<string, { handler: (input: unknown, extra: unknown) => Promise<{ structuredContent: { idea: Idea } }> }>;
+  })._registeredTools['ideas.chat'];
+  const result = await chatTool.handler({ ideaId: 'idea-1', prompt: 'New prompt', persist: true }, {});
+  assert.equal(result.structuredContent.idea.chatHistory.length, 3);
+  assert.deepEqual(result.structuredContent.idea.chatHistory.map((message) => message.role), ['user', 'user', 'assistant']);
+  assert.equal(result.structuredContent.idea.chatHistory.at(-1)?.content, 'history:1');
+});
+
 test('idea summaries paginate without hydrating chat, related ideas, or vetting data', async () => {
   const store = createStore();
   await store.saveIdea(makeIdea({
