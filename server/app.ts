@@ -94,7 +94,7 @@ function sendStream(
   const emitDelta = (delta: string) => {
     if (controller.signal.aborted || res.destroyed) return;
     fullText += delta;
-    res.write(`data: ${JSON.stringify({ delta, fullText })}\n\n`);
+    res.write(`data: ${JSON.stringify({ delta })}\n\n`);
   };
 
   void runner(emitDelta, controller.signal)

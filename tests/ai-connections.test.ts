@@ -19,6 +19,30 @@ function fixture() {
 }
 const input = { kind: 'api', provider: 'openai', name: 'Test', model: 'test-model' } as const;
 
+function parseClientStream(body: string) {
+  let fullText = '';
+  const chunks: string[] = [];
+  let result = '';
+
+  for (const line of body.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    const payload = JSON.parse(line.slice(6).trim()) as {
+      delta?: string;
+      fullText?: string;
+      done?: boolean;
+    };
+    if (payload.delta) {
+      fullText = payload.fullText ?? `${fullText}${payload.delta}`;
+      chunks.push(fullText);
+    }
+    if (payload.done) {
+      result = payload.fullText ?? fullText;
+    }
+  }
+
+  return { chunks, result };
+}
+
 test('fresh databases require setup and never default to credential-free Gemini', async () => {
   const { store, connections } = fixture(); await migrateSettings(connections);
   assert.deepEqual(await store.getSettings(), { version: 2, activeConnectionId: null });
@@ -149,5 +173,32 @@ test('HTTP streams survive request-body completion and cancel upstream on discon
     await streaming.body!.getReader().read(); controller.abort();
     for (let attempt = 0; attempt < 50 && !upstreamAborted; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal(upstreamAborted, true);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('HTTP stream deltas stay incremental and remain compatible with the client parser', async () => {
+  const { store } = fixture();
+  const ai = {
+    generateResponseStream: async (_prompt: string, emit: (text: string) => void) => {
+      for (const delta of ['a', 'bb', 'ccc']) emit(delta);
+      return 'abbccc';
+    }
+  };
+  const server = createHttpApp(store, ai as never).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/ai/raw-response`;
+
+  try {
+    const body = await (await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'incremental', stream: true })
+    })).text();
+    const events = body.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)) as Record<string, unknown>);
+
+    assert.deepEqual(events.slice(0, 3).map(event => event.delta), ['a', 'bb', 'ccc']);
+    assert.ok(events.slice(0, 3).every(event => !('fullText' in event)));
+    assert.deepEqual(events.at(-1), { done: true, fullText: 'abbccc' });
+    assert.deepEqual(parseClientStream(body), { chunks: ['a', 'abb', 'abbccc'], result: 'abbccc' });
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
