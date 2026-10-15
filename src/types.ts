@@ -127,7 +127,8 @@ export type AiConnection = {
   name: string;
   revision: number;
 } & ({ kind: 'api'; provider: ApiProvider; model: string; baseUrl?: string; hasKey: boolean }
-  | { kind: 'cli_proxy'; tool: string; model?: string });
+  | { kind: 'cli_proxy'; tool: string; model?: string; hasKey?: boolean }
+  | { kind: 'chatgpt'; model?: string; hasSession: boolean; account?: { email: string; planUsageEnabled: boolean } });
 
 export interface AppSettings {
   version: 2;

@@ -52,13 +52,15 @@ async function scenario(name, run) {
   catch (error) { results.push({ name, passed: false, error: error.stack }); throw error; }
 }
 async function sendChat(text) { const input = page.getByPlaceholder('Ask about your idea...'); await enabled(input); await input.fill(text); await input.press('Enter'); }
-async function connectionRow(name = 'E2E Codex') { const row = page.locator('section[aria-label="AI connections"] .border.rounded-lg').filter({ has: page.getByText(name, { exact: true }) }); await visible(row); return row; }
+async function connectionRow(name = 'E2E Codex') { const row = page.getByTestId('ai-connection-row').filter({ has: page.getByText(name, { exact: true }) }); await visible(row); return row; }
 async function testAndActivate(row) {
+  if (await page.getByRole('dialog').count()) await button('Done').click();
+  await row.locator('summary').click();
   const test = row.getByRole('button', { name: 'Test', exact: true }); await enabled(test); await test.click();
   await visible(page.getByText('Connection test passed. You can now make it active.', { exact: true }));
   const active = row.getByRole('button', { name: 'Make active', exact: true });
   if (await active.count()) { await enabled(active); await active.click(); }
-  await visible(page.getByText('AI status: configured', { exact: true }));
+  await poll(async () => (await api('/api/ai/status')).state === 'configured', 'configured AI');
   await visible(row.getByLabel('Active connection'));
   assert.equal(await row.getByRole('button', { name: 'Make active', exact: true }).count(), 0);
 }
@@ -66,7 +68,7 @@ try {
   await mkdir(output, { recursive: true }); temp = await mkdtemp(path.join(tmpdir(), 'startup-e2e-')); proxy = await fixtures.startMockProxy();
   const backendPort = await freePort(), vitePort = await freePort(); backend = `http://127.0.0.1:${backendPort}`; origin = `http://127.0.0.1:${vitePort}`;
   backendEnv = { APP_DB_PATH: path.join(temp, 'app.sqlite'), LEGACY_DB_JSON_PATH: path.join(temp, 'absent-legacy.json'), SERVER_PORT: String(backendPort), CLI_PROXY_BASE_URL: proxy.url, ALLOWED_ORIGINS: origin };
-  start('backend', process.execPath, ['--import', 'tsx', 'server/index.ts'], backendEnv);
+  start('backend', process.execPath, ['--import', 'tsx', 'scripts/e2e-fixtures/backend.ts'], backendEnv);
   await poll(async () => (await fetch(`${backend}/api/health`)).ok, 'backend readiness');
   start('vite', process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(vitePort), '--strictPort'], { VITE_BACKEND_TARGET: backend });
   await poll(async () => (await fetch(origin)).ok, 'Vite readiness');
@@ -105,45 +107,103 @@ try {
     await button('New Idea').click(); await page.waitForURL(/\/idea\/.+/); assert.equal(await page.getByPlaceholder('Ask about your idea...').isEnabled(), false);
     await goto('/settings');
     assert.equal(await page.getByLabel('Name', { exact: true }).count(), 0, 'connection form is collapsed initially');
-    const newConnection = button('New connection'); await visible(newConnection); await newConnection.click();
+    const newConnection = button('Add connection'); await visible(newConnection); await newConnection.click();
     await visible(page.getByRole('heading', { name: 'Add connection', exact: true }));
     const nameField = page.getByLabel('Name', { exact: true }); await visible(nameField);
     await poll(() => nameField.evaluate(element => element === document.activeElement), 'New connection focuses Name');
-    await nameField.fill('E2E API Draft'); await page.getByLabel('Model', { exact: true }).fill('explicit-e2e-model');
+    await page.getByLabel('Authentication', { exact: true }).selectOption('api_key'); await nameField.fill('E2E API Draft'); await page.getByLabel('Model', { exact: true }).fill('explicit-e2e-model');
     assert.equal(await button('Create connection').count(), 1); assert.equal(await button('Save connection').count(), 0);
     const key = page.getByLabel(/API key/); assert.equal(await key.getAttribute('type'), 'password'); await key.fill('NOT-A-SECRET-FORM-ONLY'); await key.fill(''); await button('Create connection').click(); await visible(page.getByText(/Connection saved\. Test it/));
-    await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); assert.equal(await button('Save changes').count(), 1); assert.equal(await button('Cancel').count(), 1);
-    const apiTypeSelect = page.locator('label').filter({ hasText: /^Connection type/ }).locator('select'); const apiProviderSelect = page.locator('label').filter({ hasText: /^Provider/ }).locator('select');
+    await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); assert.equal(await button('Save changes').count(), 1); assert.equal(await button('Done').count(), 1);
+    const apiTypeSelect = page.getByLabel('Authentication', { exact: true }); const apiProviderSelect = page.locator('label').filter({ hasText: /^Provider/ }).locator('select');
     assert.equal(await apiTypeSelect.isDisabled(), true); assert.equal(await apiProviderSelect.isDisabled(), true);
     const draft = (await api('/api/ai/connections')).find(connection => connection.name === 'E2E API Draft'); assert.equal(draft.model, 'explicit-e2e-model'); assert.equal(draft.hasKey, false); assert.equal((await api('/api/settings')).activeConnectionId, null);
+  });
+  await scenario('connection-dialog-keyboard-and-dirty-draft', async () => {
+    await button('Done').click(); const trigger = button('Add connection'); await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Add connection', exact: true }); await visible(dialog);
+    await page.screenshot({ path: path.join(output, 'connection-dialog-desktop.png'), fullPage: true });
+    for (let n = 0; n < 18; n++) { await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('dialog'))), true); }
+    await page.getByLabel('Name', { exact: true }).fill('Unsaved dialog draft');
+    page.once('dialog', prompt => prompt.dismiss()); await page.keyboard.press('Escape'); await visible(dialog); assert.equal(await page.getByLabel('Name', { exact: true }).inputValue(), 'Unsaved dialog draft');
+    page.once('dialog', prompt => prompt.accept()); await page.keyboard.press('Escape'); await gone(dialog);
+    await poll(() => trigger.evaluate(element => element === document.activeElement), 'dialog returns focus');
   });
   let connectionId, manualId;
   await scenario('http-connection-contract-and-ui-activation', async () => {
     const connection = await api('/api/ai/connections', 'POST', { kind: 'cli_proxy', tool: 'codex', name: 'E2E Codex' }); connectionId = connection.id;
     assert.deepEqual(await api(`/api/ai/connections/${connectionId}/test`, 'POST', {}), { ok: true }); await api('/api/settings', 'PUT', { activeConnectionId: connectionId }); await api('/api/settings', 'PUT', { activeConnectionId: null });
     await page.reload(); const row = await connectionRow(); await row.getByRole('button', { name: 'Edit', exact: true }).click();
-    await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); await visible(page.getByText('Provider and connection type are locked after creation. To change either, create a new connection.', { exact: true }));
-    assert.equal(await page.locator('label').filter({ hasText: /^Connection type/ }).locator('select').isDisabled(), true); assert.equal(await page.locator('label').filter({ hasText: /^Provider/ }).locator('select').count(), 0);
-    await visible(page.getByText('OpenAI sign-in', { exact: true })); await visible(page.getByText('OpenAI is not signed in. Start sign-in to use the authenticated Codex connection.', { exact: true }));
+    await visible(page.getByRole('heading', { name: 'Edit connection', exact: true })); await visible(page.getByText('Provider and authentication are locked after creation. Create another connection to change them.', { exact: true }));
+    assert.equal(await page.getByLabel('Provider', { exact: true }).isDisabled(), true);
+    await visible(page.getByText('OpenAI sign-in', { exact: true })); await button('Check status').click(); await visible(page.getByText('OpenAI is not signed in. Start sign-in to use the authenticated Codex connection.', { exact: true }));
     await button('Sign in with OpenAI').click(); await visible(page.getByText('Complete OpenAI sign-in in the browser opened by Codex.', { exact: true }));
     await button('Check status').click(); await visible(page.getByText('Signed in with OpenAI through Codex.', { exact: true }));
     await button('Sign out').click(); await visible(page.getByText('Signed out of OpenAI in Codex.', { exact: true }));
     await page.getByLabel('Model (optional)').fill('e2e-cli-model'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/)); await testAndActivate(row);
-    await button('Cancel').click(); await gone(page.getByRole('heading', { name: 'Edit connection', exact: true }));
+    await gone(page.getByRole('dialog'));
   });
   await scenario('settings-cli-proxy-retry-preserves-draft', async () => {
     failProxyTools = true; expectedFailure = true;
     try {
       await goto('/settings');
       const section = page.locator('section[aria-label="AI connections"]'); await visible(section);
-      await button('New connection').click(); await visible(page.getByRole('heading', { name: 'Add connection', exact: true }));
-      await page.getByLabel('Name', { exact: true }).fill('CLI Retry Draft'); await page.locator('label').filter({ hasText: /^Connection type/ }).locator('select').selectOption('cli_proxy');
+      await button('Add connection').click(); await visible(page.getByRole('heading', { name: 'Add connection', exact: true }));
+      await page.getByLabel('Name', { exact: true }).fill('CLI Retry Draft'); await page.getByLabel('Provider', { exact: true }).selectOption('codex');
       const toolsAlert = page.getByRole('alert').filter({ hasText: 'CLI tools unavailable' }); await visible(toolsAlert); failProxyTools = false; expectedFailure = false;
       await toolsAlert.getByRole('button', { name: 'Retry', exact: true }).click(); await gone(toolsAlert);
-      await poll(() => page.getByLabel('Tool').inputValue().then(value => value === 'codex'), 'CLI tool retry result');
+      await poll(() => page.getByLabel('Provider', { exact: true }).inputValue().then(value => value === 'codex'), 'CLI tool retry result');
       assert.equal(await page.getByLabel('Name', { exact: true }).inputValue(), 'CLI Retry Draft', 'CLI retry preserves the draft name');
     } finally { failProxyTools = 0; expectedFailure = false; }
   });
+  if (!lag) {
+    await scenario('cursor-and-kiro-connection-keys', async () => {
+      await goto('/settings');
+      for (const tool of ['cursor', 'kiro']) {
+        await button('Add connection').click(); await page.getByLabel('Provider', { exact: true }).selectOption(tool);
+        await page.getByLabel('Name', { exact: true }).fill(`E2E ${tool}`); await page.getByLabel(/API key/).fill(`NOT-A-SECRET-${tool}`);
+        await button('Create connection').click(); await visible(page.getByText(/Connection saved\. Test it/));
+        const connection = (await api('/api/ai/connections')).find(c => c.name === `E2E ${tool}`); assert.equal(connection.hasKey, true);
+        if (tool === 'kiro') await visible(page.getByText(/Using the Kiro CLI account/));
+        await button('Test connection').click(); await visible(page.getByText('Connection test passed. You can now make it active.', { exact: true }));
+        const request = proxy.state.requests.at(-1); assert.equal(request.apiKey, `NOT-A-SECRET-${tool}`); assert.equal(request.tool, tool);
+        if (tool === 'cursor') {
+          await page.getByLabel(/API key/).fill('NOT-A-SECRET-cursor-replacement'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/));
+          page.once('dialog', prompt => prompt.accept()); await button('Remove stored key').click(); await visible(page.getByText('Stored credential removed.', { exact: true }));
+          assert.equal((await api('/api/ai/connections')).find(c => c.id === connection.id).hasKey, false);
+        }
+        await button('Done').click();
+      }
+      assert.equal(credentialRequests.length, 4);
+    });
+    await scenario('chatgpt-account-dialog-and-plan-inference', async () => {
+      await button('Add connection').click(); await page.getByLabel('Name', { exact: true }).fill('E2E ChatGPT');
+      await button('Continue with ChatGPT').click(); const link = page.getByRole('link', { name: 'Open sign-in page', exact: true }); await visible(link);
+      const authorize = new URL(await link.getAttribute('href')); const callback = new URL(authorize.searchParams.get('redirect_uri'));
+      callback.search = new URLSearchParams({ state: authorize.searchParams.get('state'), client_id: 'oaiapp_e2e', code: 'success' }).toString();
+      const result = await context.request.get(callback.toString()); assert.equal(result.status(), 200);
+      await visible(page.getByText('ChatGPT plan usage is enabled.', { exact: true }));
+      await page.screenshot({ path: path.join(output, 'chatgpt-connection-dialog.png'), fullPage: true });
+      await poll(() => page.locator('datalist option[value="e2e-chatgpt-model"]').count().then(count => count === 1), 'ChatGPT account model catalog');
+      await page.getByLabel('Model', { exact: true }).fill('e2e-chatgpt-model'); await button('Save changes').click(); await visible(page.getByText(/Connection saved\. Test it/));
+      await button('Test connection').click(); await visible(page.getByText('Connection test passed. You can now make it active.', { exact: true }));
+      await page.getByRole('dialog').getByRole('button', { name: 'Make active', exact: true }).click(); await visible(page.getByText('E2E ChatGPT is active.', { exact: true })); await button('Done').click();
+      await goto('/'); await visible(page.getByText(/Using ChatGPT plan · e2e@example.com/));
+      await page.getByPlaceholder('I have an idea for...').fill('ChatGPT subscription brainstorm'); await page.getByPlaceholder('I have an idea for...').press('Enter'); await visible(page.getByText(fixtures.brainstorm, { exact: true }));
+      await goto('/settings'); await (await connectionRow('E2E ChatGPT')).getByRole('button', { name: 'Edit', exact: true }).click();
+      await button('Disconnect account').click(); await visible(page.getByText('Disconnected this ChatGPT account.', { exact: true }));
+      assert.equal(await page.getByText(/^Using ChatGPT plan/).count(), 0, 'disconnected active account is not shown as using the plan');
+      await button('Done').click(); await goto('/'); await gone(page.getByText(/^Using ChatGPT plan/));
+      await api('/api/settings', 'PUT', { activeConnectionId: connectionId }); await goto('/settings');
+    });
+    await scenario('chatgpt-sign-in-cancel-and-first-run-dialog', async () => {
+      await button('Add connection').click(); await page.getByLabel('Name', { exact: true }).fill('E2E Cancelled sign-in'); await button('Continue with ChatGPT').click(); await visible(button('Cancel sign-in'));
+      await button('Cancel sign-in').click(); await visible(page.getByText('Sign-in cancelled.', { exact: true })); await button('Done').click();
+      await api('/api/settings', 'PUT', { activeConnectionId: null }); await goto('/'); await button('Set up AI').first().click(); await visible(page.getByRole('dialog', { name: 'Add connection', exact: true }));
+      await page.keyboard.press('Escape'); await gone(page.getByRole('dialog')); await visible(button('Set up AI').first());
+      await api('/api/settings', 'PUT', { activeConnectionId: connectionId }); await page.reload();
+    });
+  }
   await scenario('manual-idea-persistence', async () => {
     await goto('/'); await button('New Idea').click(); await page.waitForURL(/\/idea\/.+/); manualId = page.url().split('/').at(-1); await page.getByPlaceholder('Idea Title').fill('E2E Manual Idea'); await page.getByPlaceholder('Describe your idea in detail...').fill('E2E isolated SQLite workflow details.');
     await poll(async () => { const idea = await api(`/api/ideas/${manualId}`); return idea.title === 'E2E Manual Idea' && idea.details.includes('SQLite'); }, 'manual persisted'); await page.reload(); await poll(async () => (await page.getByPlaceholder('Idea Title').inputValue()) === 'E2E Manual Idea', 'reload title');
@@ -195,7 +255,12 @@ try {
       assert.ok(layout.mainWidth <= layout.mainClientWidth + 1, `mobile main overflows horizontally: ${JSON.stringify(layout)}`);
       const textMetrics = await name.evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); const rects = [...range.getClientRects()]; return { lines: rects.length, widestLine: Math.max(...rects.map(rect => rect.width)) }; });
       assert.ok(textMetrics.lines <= 3, `connection name wraps into too many lines: ${JSON.stringify(textMetrics)}`); assert.ok(textMetrics.widestLine > 80, `connection name appears character-wrapped: ${JSON.stringify(textMetrics)}`);
-      assert.ok(await row.getByRole('button', { name: 'Edit', exact: true }).isVisible()); assert.ok(await row.getByRole('button', { name: 'Test', exact: true }).isVisible());
+      assert.ok(await row.getByRole('button', { name: 'Edit', exact: true }).isVisible()); assert.ok(await row.locator('summary').isVisible());
+      await row.getByRole('button', { name: 'Edit', exact: true }).click();
+      const dialog = page.getByRole('dialog'); await visible(dialog);
+      const bounds = await dialog.boundingBox(); assert.ok(bounds.width <= 390 && bounds.height <= 844 * .91);
+      await page.screenshot({ path: path.join(output, 'connection-dialog-mobile.png'), fullPage: true });
+      await button('Done').click();
       await page.setViewportSize({ width: 1440, height: 1100 });
     });
     await scenario('settings-backup-controls', async () => {
@@ -205,7 +270,7 @@ try {
       const downloaded = page.waitForEvent('download'); await button('Export Backup').click(); const download = await downloaded; const backupPath = path.join(output, 'backup-regression.json'); await download.saveAs(backupPath); const raw = await readFile(backupPath, 'utf8'); const backup = JSON.parse(raw); assert.equal(backup.settings.version, 2); assert.ok(!/apiKey|geminiKey|credentialRef|NOT-A-SECRET/.test(raw));
     });
     await scenario('credential-free-backup', async () => {
-      const downloaded = page.waitForEvent('download'); await button('Export Backup').click(); const download = await downloaded; const backupPath = path.join(output, 'backup.json'); await download.saveAs(backupPath); const raw = await readFile(backupPath, 'utf8'); const backup = JSON.parse(raw); assert.ok(backup.ideas.length > 0); assert.equal(backup.settings.version, 2); assert.ok(!/apiKey|geminiKey|credentialRef|NOT-A-SECRET/.test(raw)); assert.deepEqual(credentialRequests, []);
+      const downloaded = page.waitForEvent('download'); await button('Export Backup').click(); const download = await downloaded; const backupPath = path.join(output, 'backup.json'); await download.saveAs(backupPath); const raw = await readFile(backupPath, 'utf8'); const backup = JSON.parse(raw); assert.ok(backup.ideas.length > 0); assert.equal(backup.settings.version, 2); assert.ok(!/apiKey|geminiKey|credentialRef|NOT-A-SECRET/.test(raw)); assert.equal(credentialRequests.length, lag ? 0 : 4);
     });
     await scenario('web-stdio-shared-store', async () => {
       client = new Client({ name: 'e2e-shared-store', version: '1.0.0' }); transport = new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'node_modules/tsx/dist/cli.mjs'), path.join(root, 'server/stdio.ts')], cwd: root, env: { ...process.env, ...backendEnv }, stderr: 'pipe' });
@@ -281,11 +346,11 @@ try {
       assert.equal(await page.getByPlaceholder('Idea Title').inputValue(), 'Pagination 250');
     });
   }
-  assert.deepEqual(proxy.state.errors, [], 'mock contract errors'); assert.deepEqual(unexpected, [], 'unexpected browser errors'); assert.deepEqual(credentialRequests, [], 'no native Keychain credential requests'); console.log(`${results.length}/${results.length} scenarios passed; artifacts: ${output}`);
+  assert.deepEqual(proxy.state.errors, [], 'mock contract errors'); assert.deepEqual(unexpected, [], 'unexpected browser errors'); assert.equal(credentialRequests.length, lag ? 0 : 4, 'expected test-only in-memory credential requests'); console.log(`${results.length}/${results.length} scenarios passed; artifacts: ${output}`);
 } catch (error) { process.exitCode = 1; console.error(error.stack); if (page) await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {
   await client?.close().catch(() => {}); await transport?.close().catch(() => {}); await context?.close().catch(() => {}); await browser?.close().catch(() => {});
   for (const child of children) if (child.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch {} }
   for (const child of children) { if (child.pid && child.exitCode === null) await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(2000)]); if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } await writeFile(path.join(output, `${child.logName}.log`), child.log); }
-  await proxy?.close(); await writeFile(path.join(output, 'results.json'), JSON.stringify({ mode: lag ? 'lag' : 'thorough', results, measurements, unexpected, expectedErrors, mockErrors: proxy?.state.errors, credentialRequests, limitations: ['API key forms only: native credential writes and real providers excluded.', 'Dynamic Vite/backend ports use reserve-release followed by strict bind.', 'Browser heap metrics are unavailable when performance.memory is not exposed.'] }, null, 2)); if (temp) await rm(temp, { recursive: true, force: true });
+  await proxy?.close(); await writeFile(path.join(output, 'results.json'), JSON.stringify({ mode: lag ? 'lag' : 'thorough', results, measurements, unexpected, expectedErrors, mockErrors: proxy?.state.errors, credentialRequests, limitations: ['In-memory credential writes and mocked OAuth/inference only; native Keychain and real provider calls excluded.', 'Dynamic Vite/backend ports use reserve-release followed by strict bind.', 'Browser heap metrics are unavailable when performance.memory is not exposed.'] }, null, 2)); if (temp) await rm(temp, { recursive: true, force: true });
 }

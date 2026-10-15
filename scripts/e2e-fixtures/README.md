@@ -36,3 +36,5 @@ other error-level console messages and all page errors fail the run.
 Normal cleanup closes the owned browser and MCP client/transport, kills only
 owned child process groups, closes the mock server, and removes only the
 temporary SQLite directory. Artifacts remain for inspection.
+
+`backend.ts` is a test-only backend with in-memory credentials and mocked ChatGPT OAuth, model discovery, and completed Responses streams. It blocks other external requests while permitting the loopback CLI fixture. Production entrypoints continue to use macOS Keychain and official authentication endpoints.

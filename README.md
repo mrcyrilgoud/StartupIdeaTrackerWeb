@@ -44,7 +44,7 @@ A Progressive Web App for capturing, refining, and analyzing startup ideas with 
 ## Setup
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 18.17+
 
 ### Install
 ```bash
@@ -70,14 +70,18 @@ AI_CLI_PROXY_PATH=/path/to/AI-CLI-Proxy-Server npm run dev
 
 ## AI Configuration
 
-On first run, choose **Set up AI** or continue capturing ideas without AI. There is no automatically selected provider. In Settings, save a named connection, run **Test**, then **Make active**. Tests send a small inference request and can consume usage. Editing a model, endpoint, tool, or key requires another test.
+On first run, choose **Set up AI** or continue capturing ideas without AI. There is no automatically selected provider. In Settings, choose **Add connection** to open the setup dialog. Save a named connection, run **Test connection**, then **Make active**. Editing opens the same dialog; **Done** closes it while keeping the connection saved. Tests send a small inference request and can consume usage. Editing a model, endpoint, tool, or key requires another test.
 
 - Direct APIs: OpenAI Responses, Anthropic/Claude Messages, Google Gemini, and OpenAI-compatible services. Enter the exact model ID, or load the provider's model list after saving a credential. Compatible APIs use a base URL such as `https://api.example.com/v1`.
 - Ollama: configure its endpoint and model. HTTP is permitted for loopback services; remote endpoints require HTTPS.
-- CLI through proxy: select Codex, Claude Code, Cursor, Kiro, Gemini, or OpenCode from the companion proxy. `npm run dev` starts that proxy. Install and sign in through the official CLI; manage CLI API keys in the proxy. Subscription login tokens are never entered into this app.
-- OpenAI sign-in: select the Codex CLI connection and use **Sign in with OpenAI** in Settings. The official `codex login --device-auth` flow owns its credentials; this app only checks `codex login status` and never imports session tokens. Direct OpenAI and arbitrary OpenAI-compatible API connections still require an explicit model ID.
+- Cursor and Kiro: select either provider in the dialog. Enter an API key or use an existing official CLI account. Keys entered here belong to the individual connection and are stored in the app’s Keychain service; the companion proxy receives them only for that request. Kiro uses its signed-in CLI account before a key. Use **Check status** to see the effective method. Run `kiro-cli login` to connect its account. Both integrations require their official CLI on the proxy host and an updated companion proxy.
+- Other local CLIs: select Codex CLI, Claude Code CLI, Gemini CLI, or OpenCode. Existing profiles retain proxy-managed authentication. `npm run dev` starts the companion proxy. Its isolated inference adapters disable local tools and do not support image input.
+- OpenAI: choose **ChatGPT account** or **API key**. **Continue with ChatGPT** opens the official browser flow and requests permission to use an eligible plan. After sign-in, choose a model from your account’s catalog, save, test, and activate. **Manage usage** opens ChatGPT usage settings. Add a separate named connection for another account or workspace. **Disconnect account** revokes only this app registration’s renewable session and clears its local tokens; remote revocation failures are reported. This integration does not require Codex CLI or import its existing session.
+- Legacy Codex sign-in: Codex CLI connections retain **Sign in with OpenAI** using the official `codex login --device-auth` flow. Codex owns those credentials; this app only checks login status.
 
-API keys are stored in **macOS Keychain**, using native bindings. SQLite stores connection metadata and credential references; the browser only receives `hasKey`. The backend and stdio MCP share the database's active connection. Keychain access must be allowed for the Node process; other operating systems do not currently support storing API credentials in this app.
+ChatGPT authentication uses OpenAI’s [registration flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [session management](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions), and [Responses inference contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference). Plan access depends on eligibility and granted permission. Identity-only sign-in cannot activate AI. Usage and eligibility failures never switch automatically to API-key billing.
+
+API keys and ChatGPT OAuth tokens are stored in **macOS Keychain**, using native bindings. SQLite stores connection metadata and credential references; the browser receives only credential-presence flags and safe account/status information. OAuth registration metadata and the persistent host ID stay out of backups; imported ChatGPT profiles require fresh sign-in. HTTP and stdio runtimes share a SQLite lease to coordinate rotating-token refreshes. The backend and stdio MCP share the database's active connection. Keychain access must be allowed for the Node process; other operating systems do not currently support storing API credentials in this app.
 
 Existing configured settings migrate once. Gemini keys are verified in Keychain before the legacy database field is cleared. If access is denied, allow access and use **Refresh connections** in Settings to retry. Empty Gemini defaults enter setup instead of failing the first AI request.
 
@@ -91,7 +95,7 @@ npm run build
 npm run e2e:thorough
 ```
 
-The browser suite uses temporary SQLite storage, mocked AI responses, and isolated ports. Install Chromium once with `npx playwright install chromium` if it is not present. `npm run e2e:lag` runs the same tracked regression harness. Automated provider tests make no paid API calls.
+The browser suite uses temporary SQLite storage, a test-only in-memory credential store, mocked OAuth and AI responses, and isolated ports. It never opens a real sign-in browser, writes Keychain entries, or sends external inference calls. Install Chromium once with `npx playwright install chromium` if it is not present. `npm run e2e:lag` runs the same tracked regression harness. Automated provider tests make no paid API calls.
 
 On macOS, `NATIVE_KEYCHAIN_TEST=1 npm test` also verifies a disposable Keychain-backed connection against a loopback mock. It cleans up its test entries and makes no external provider calls.
 

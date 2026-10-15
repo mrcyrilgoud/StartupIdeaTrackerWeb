@@ -83,7 +83,10 @@ export const aiConnectionsTable = sqliteTable('ai_connections', {
   createdAt: integer('created_at').notNull(), updatedAt: integer('updated_at').notNull()
 });
 
+export const aiAuthLeasesTable = sqliteTable('ai_auth_leases', { id: text('id').primaryKey(), owner: text('owner').notNull(), expiresAt: integer('expires_at').notNull() });
+
 export const schema = {
+  aiAuthLeasesTable,
   ideasTable,
   foldersTable,
   ideaKeywordsTable,

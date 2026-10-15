@@ -32,12 +32,13 @@ export async function startMockProxy() {
   const state = { malformedSummary: false, failNext: false, requests: [], errors: [], cancelledStreams: 0 };
   const server = http.createServer(async (req, res) => {
     const json = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
-    if (req.method === 'GET' && req.url === '/api/tools') return json(200, { defaultTool: 'codex', tools: ['codex'], toolDetails: [{ id: 'codex', available: true, capabilities: { streaming: true, model: true, image: false }, authenticationStatus: 'authenticated', authenticationInstructions: 'E2E mock requires no credentials.' }] });
+    if (req.method === 'GET' && req.url === '/api/tools') return json(200, { requestCredentials: true, authStatus: true, defaultTool: 'codex', tools: ['codex', 'cursor', 'kiro'], toolDetails: ['codex', 'cursor', 'kiro'].map(id => ({ id, available: true, capabilities: { streaming: true, model: true, image: false }, authenticationStatus: 'authenticated', authenticationInstructions: 'E2E mock requires no credentials.' })) });
+    if (req.method === 'POST' && req.url?.endsWith('/auth-status')) return json(200, { state: 'authenticated', effectiveMethod: req.url.includes('/kiro/') ? 'cli_account' : 'api_key', message: req.url.includes('/kiro/') ? 'Using the Kiro CLI account. A saved key is used when no account session exists.' : 'Using an API key through the official CLI.' });
     if (req.method !== 'POST' || !['/api/low-level', '/api/low-level-stream'].includes(req.url)) return json(404, { error: 'Unknown mock route' });
     try {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw); state.requests.push({ route: req.url, ...body });
-      if (body.tool !== 'codex') throw new Error('Expected explicit codex tool');
+      if (!['codex', 'cursor', 'kiro'].includes(body.tool)) throw new Error('Expected explicit supported tool');
       if (state.failNext) { state.failNext = false; return json(503, { error: 'E2E injected provider failure' }); }
       const text = responseFor(body.prompt, state);
       if (req.url === '/api/low-level') return json(200, { response: text });

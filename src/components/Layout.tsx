@@ -2,9 +2,11 @@ import React from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { Lightbulb, Settings, Sparkles, Gamepad2 } from 'lucide-react';
 import { AiSetupNotice } from './AiSetupNotice';
+import { useAiConnection } from '../context/AiConnectionContext';
 
 export const Layout: React.FC = () => {
     const location = useLocation();
+    const { status, ready } = useAiConnection();
 
     const isActive = (path: string) => location.pathname === path;
 
@@ -65,6 +67,7 @@ export const Layout: React.FC = () => {
 
             <main className="flex-1 overflow-auto p-4">
                 {location.pathname !== '/settings' && <AiSetupNotice />}
+                {location.pathname !== '/settings' && ready && status?.state === 'configured' && status.connection?.kind === 'chatgpt' && <div className="text-sm text-text-secondary mb-3 flex flex-wrap gap-2"><span>Using ChatGPT plan · {status.connection.account?.email}</span><a href="https://chatgpt.com/settings/usage" target="_blank" rel="noreferrer" className="text-accent underline">Manage usage</a></div>}
                 <Outlet />
             </main>
         </div>

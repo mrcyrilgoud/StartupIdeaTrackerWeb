@@ -351,10 +351,14 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService, conn
   app.get('/api/ai/connections', (_req, res, next) => { try { res.json(connectionService().list()); } catch (error) { next(error); } });
   app.post('/api/ai/connections', (req, res, next) => { try { res.status(201).json(connectionService().create(connectionInputSchema.parse(req.body))); } catch (error) { next(error); } });
   app.patch('/api/ai/connections/:id', async (req, res, next) => { try { res.json(await connectionService().update(req.params.id, req.body)); } catch (error) { next(error); } });
-  app.delete('/api/ai/connections/:id', async (req, res, next) => { try { await connectionService().delete(req.params.id); res.status(204).end(); } catch (error) { next(error); } });
+  app.delete('/api/ai/connections/:id', async (req, res, next) => { try { const result = await connectionService().delete(req.params.id); if (result) res.json(result); else res.status(204).end(); } catch (error) { next(error); } });
   app.put('/api/ai/connections/:id/credential', async (req, res, next) => { try { await connectionService().setCredential(req.params.id, credentialWriteSchema.parse(req.body).apiKey); res.status(204).end(); } catch (error) { next(error); } });
-  app.delete('/api/ai/connections/:id/credential', async (req, res, next) => { try { await connectionService().deleteCredential(req.params.id); res.status(204).end(); } catch (error) { next(error); } });
+  app.delete('/api/ai/connections/:id/credential', async (req, res, next) => { try { await connectionService().deleteApiCredential(req.params.id); res.status(204).end(); } catch (error) { next(error); } });
   app.post('/api/ai/connections/:id/test', async (req, res, next) => { try { res.json(await connectionService().test(req.params.id)); } catch (error) { next(error); } });
+  app.get('/api/ai/connections/:id/auth', async (req, res, next) => { try { res.json(await connectionService().authStatus(req.params.id)); } catch (error) { next(error); } });
+  app.post('/api/ai/connections/:id/auth/start', async (req, res, next) => { try { res.json(await connectionService().chatGptAuth.start(req.params.id)); } catch (error) { next(error); } });
+  app.post('/api/ai/connections/:id/auth/cancel', async (req, res, next) => { try { connectionService().chatGptAuth.cancel(req.params.id); res.json(await connectionService().authStatus(req.params.id)); } catch (error) { next(error); } });
+  app.post('/api/ai/connections/:id/auth/disconnect', async (req, res, next) => { try { res.json(await connectionService().chatGptAuth.disconnect(req.params.id)); } catch (error) { next(error); } });
   app.get('/api/ai/status', async (_req, res, next) => { try { res.json(await connectionService().status()); } catch (error) { next(error); } });
   app.get('/api/ai/openai-auth', async (_req, res, next) => { try { res.json(await openAiAuth.status()); } catch (error) { next(error); } });
   app.post('/api/ai/openai-auth/start', async (_req, res, next) => { try { res.json(await openAiAuth.start()); } catch (error) { next(error); } });

@@ -69,15 +69,15 @@ export class BackendAiService {
   constructor(public readonly resolveConnection: ResolveConnection, private readonly fetchImpl: typeof fetch = fetch) {}
 
   async generateResponse(prompt: string, thinking = false, jsonMode = false, image?: string, options: RequestOptions = {}): Promise<string> {
-    const { connection, apiKey } = await this.resolveConnection();
-    return createProvider(connection, apiKey, this.fetchImpl).generate({
+    const { connection, apiKey, accessToken } = await this.resolveConnection();
+    return createProvider(connection, apiKey, this.fetchImpl, accessToken).generate({
       prompt, model: connection.model ?? '', thinking, jsonMode, image, maxOutputTokens: options.maxOutputTokens
     }, options);
   }
 
   async generateResponseStream(prompt: string, onChunk: (text: string) => void, thinking = false, image?: string, options: StreamOptions = {}): Promise<string> {
-    const { connection, apiKey } = await this.resolveConnection();
-    return createProvider(connection, apiKey, this.fetchImpl).stream({
+    const { connection, apiKey, accessToken } = await this.resolveConnection();
+    return createProvider(connection, apiKey, this.fetchImpl, accessToken).stream({
       prompt, model: connection.model ?? '', thinking, image, maxOutputTokens: options.maxOutputTokens
     }, onChunk, options);
   }

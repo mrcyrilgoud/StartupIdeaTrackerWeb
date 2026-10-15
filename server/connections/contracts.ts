@@ -19,7 +19,8 @@ const cli = z.object({
   tool: z.enum(['codex', 'claude', 'cursor', 'kiro', 'gemini', 'opencode']),
   model: z.string().trim().min(1).max(200).optional()
 }).strict();
-export const connectionInputSchema = z.discriminatedUnion('kind', [api, cli]).superRefine((value, ctx) => {
+const chatgpt = z.object({ kind: z.literal('chatgpt'), name: z.string().trim().min(1).max(100), model: z.string().trim().min(1).max(200).optional() }).strict();
+export const connectionInputSchema = z.discriminatedUnion('kind', [api, cli, chatgpt]).superRefine((value, ctx) => {
   if (value.kind === 'api') {
     if (value.provider === 'openai_compatible' && !value.baseUrl) ctx.addIssue({ code: 'custom', path: ['baseUrl'], message: 'A compatible API base URL is required.' });
     if (!['ollama', 'openai_compatible'].includes(value.provider) && value.baseUrl) ctx.addIssue({ code: 'custom', path: ['baseUrl'], message: 'This provider uses its official endpoint.' });
@@ -31,7 +32,8 @@ export type StoredConnection = ConnectionInput & { id: string; revision: number;
 export const storedConnectionSchema = z.object({ id: z.string(), metadata: connectionInputSchema, credentialRef: z.string().nullable(), revision: z.number().int().positive(), testedRevision: z.number().int().nullable() });
 export const publicConnectionSchema = z.union([
   api.extend({ id: z.string(), revision: z.number().int(), hasKey: z.boolean() }),
-  cli.extend({ id: z.string(), revision: z.number().int() })
+  cli.extend({ id: z.string(), revision: z.number().int(), hasKey: z.boolean().optional() }),
+  chatgpt.extend({ id: z.string(), revision: z.number().int(), hasSession: z.boolean(), account: z.object({ email: z.string(), planUsageEnabled: z.boolean() }).optional() })
 ]);
 export const credentialWriteSchema = z.object({ apiKey: z.string().trim().min(1).max(8192)
   .refine(value => !/[\r\n\0]/.test(value), 'API keys cannot contain control characters.')

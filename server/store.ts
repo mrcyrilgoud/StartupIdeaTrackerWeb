@@ -224,6 +224,9 @@ export function initializeSchema(sqlite: SqliteDatabase): void {
       credential_ref TEXT, revision INTEGER NOT NULL DEFAULT 1,
       tested_revision INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ai_auth_leases (
+      id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL
+    );
   `);
 
   const ideaEventsColumns = sqlite.prepare('PRAGMA table_info(idea_events)').all() as Array<{ name: string }>;
@@ -1118,10 +1121,19 @@ export class AppStore {
       testedRevision: row.tested_revision === null ? null : Number(row.tested_revision),
       ...connectionInputSchema.parse(row.kind === 'api'
         ? { name: String(row.name), kind: 'api', provider: String(row.provider), model: String(row.model), ...(row.base_url ? { baseUrl: String(row.base_url) } : {}) }
-        : { name: String(row.name), kind: 'cli_proxy', tool: String(row.cli_tool), ...(row.model ? { model: String(row.model) } : {}) })
+        : row.kind === 'chatgpt'
+          ? { name: String(row.name), kind: 'chatgpt', ...(row.model ? { model: String(row.model) } : {}) }
+          : { name: String(row.name), kind: 'cli_proxy', tool: String(row.cli_tool), ...(row.model ? { model: String(row.model) } : {}) })
     }));
   }
   getConnection(id: string): StoredConnection | undefined { return this.listConnections().find((connection) => connection.id === id); }
+  acquireAuthLease(id: string, owner: string): boolean {
+    return this.sqlite.prepare('INSERT INTO ai_auth_leases(id,owner,expires_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET owner=excluded.owner,expires_at=excluded.expires_at WHERE ai_auth_leases.expires_at < ?')
+      .run(id, owner, Date.now() + 60_000, Date.now()).changes === 1;
+  }
+  renewAuthLease(id: string, owner: string): void { this.sqlite.prepare('UPDATE ai_auth_leases SET expires_at=? WHERE id=? AND owner=?').run(Date.now() + 60_000, id, owner); }
+  deleteMetadata(key: string): void { this.sqlite.prepare('DELETE FROM app_metadata WHERE key=?').run(key); }
+  releaseAuthLease(id: string, owner: string): void { this.sqlite.prepare('DELETE FROM ai_auth_leases WHERE id=? AND owner=?').run(id, owner); }
   saveConnection(connection: StoredConnection): boolean {
     return this.atomic(() => {
       // Retain a revision floor after deletion so reusing an ID cannot produce an ABA match.

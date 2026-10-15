@@ -22,4 +22,4 @@ export interface AiProvider {
   stream(request: ProviderRequest, onChunk: (text: string) => void, options?: ProviderOptions): Promise<string>;
 }
 
-export type ResolveConnection = () => Promise<{ connection: AiConnection; apiKey?: string }>;
+export type ResolveConnection = () => Promise<{ connection: AiConnection; apiKey?: string; accessToken?: string }>;

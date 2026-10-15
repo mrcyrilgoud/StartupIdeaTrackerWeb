@@ -8,7 +8,7 @@ export { AiProviderError } from './errors.js';
 export type { AiConnection, AiProvider, ProviderOptions, ProviderRequest, ResolveConnection } from './types.js';
 
 export function getCapabilities(connection: AiConnection): { image: boolean; streaming: boolean } {
-  return { image: connection.kind === 'api' && ['openai', 'anthropic', 'gemini'].includes(connection.provider), streaming: true };
+  return { image: connection.kind === 'chatgpt' || connection.kind === 'api' && ['openai', 'anthropic', 'gemini'].includes(connection.provider), streaming: true };
 }
 
 type Payload = Record<string, any>;
@@ -34,18 +34,21 @@ function endpoint(base: string | undefined, path: string): string {
 }
 
 /** Adapters have one transport call per request; no retry or model fallback. */
-export function createProvider(connection: AiConnection, apiKey?: string, fetchImpl: typeof fetch = fetch): AiProvider {
-  const provider = connection.kind === 'cli_proxy' ? 'cli_proxy' : connection.provider;
+export function createProvider(connection: AiConnection, apiKey?: string, fetchImpl: typeof fetch = fetch, accessToken?: string): AiProvider {
+  const provider = connection.kind === 'cli_proxy' ? 'cli_proxy' : connection.kind === 'chatgpt' ? 'chatgpt' : connection.provider;
   const wire = (request: ProviderRequest, stream: boolean): WireRequest => {
-    if (connection.kind === 'api' && !request.model.trim()) throw new AiProviderError('AI_INVALID_CONFIGURATION', 400, 'An explicit AI model is required.');
+    if (connection.kind !== 'cli_proxy' && !request.model.trim()) throw new AiProviderError('AI_INVALID_CONFIGURATION', 400, 'An explicit AI model is required.');
     if (request.image && !getCapabilities(connection).image) throw new AiProviderError('AI_UNSUPPORTED_CAPABILITY', 400, 'This AI connection does not support images.');
     if (request.maxOutputTokens !== undefined && (!Number.isInteger(request.maxOutputTokens) || request.maxOutputTokens <= 0)) {
       throw new AiProviderError('AI_INVALID_CONFIGURATION', 400, 'Output token limit must be a positive integer.');
     }
     if (['openai', 'anthropic', 'gemini'].includes(provider) && !apiKey?.trim()) throw new AiProviderError('AI_AUTH_FAILED', 502, 'AI provider API key is missing.');
+    if (provider === 'chatgpt' && !accessToken) throw new AiProviderError('AI_AUTH_FAILED', 502, 'Connect your ChatGPT account in Settings.');
     const prompt = request.jsonMode ? `${request.prompt}\n\nStrictly output valid JSON format only.` : request.prompt;
     const image = request.image ? imageData(request.image) : undefined;
     switch (provider) {
+      case 'chatgpt':
+        return { url: 'https://api.openai.com/v1/responses', headers: { Authorization: `Bearer ${accessToken}` }, body: { model: request.model, stream: true, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: prompt }, ...(image ? [{ type: 'input_image', image_url: image.url }] : [])] }] } };
       case 'openai':
         return {
           url: 'https://api.openai.com/v1/responses', headers: { Authorization: `Bearer ${apiKey}` },
@@ -91,7 +94,7 @@ export function createProvider(connection: AiConnection, apiKey?: string, fetchI
       case 'cli_proxy':
         return {
           url: endpoint(CLI_PROXY_BASE_URL, stream ? '/api/low-level-stream' : '/api/low-level'), headers: {},
-          body: { tool: connection.kind === 'cli_proxy' ? connection.tool : '', prompt, ...(request.model ? { model: request.model } : {}), ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}) }
+          body: { ...(apiKey ? { apiKey } : {}), tool: connection.kind === 'cli_proxy' ? connection.tool : '', prompt, ...(request.model ? { model: request.model } : {}), ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}) }
         };
     }
   };
@@ -100,6 +103,7 @@ export function createProvider(connection: AiConnection, apiKey?: string, fetchI
       checkPayload(payload);
       let value: unknown;
       switch (provider) {
+        case 'chatgpt':
         case 'openai':
           value = streaming ? (payload.type === 'response.output_text.delta' ? payload.delta : '') :
             payload.output_text ?? payload.output?.flatMap((item: Payload) => item.content ?? []).filter((part: Payload) => part.type === 'output_text').map((part: Payload) => part.text).join('');
@@ -126,28 +130,30 @@ export function createProvider(connection: AiConnection, apiKey?: string, fetchI
       throw new AiProviderError('AI_INVALID_RESPONSE', 502, 'AI provider returned an invalid text response.');
     }
   };
+  const consumeStream = async (response: Response, onChunk: (text: string) => void, options: ProviderOptions) => {
+    let full = '', completed = false;
+    await readEvents(response, provider === 'ollama', payload => {
+      if (payload.type === 'response.completed') completed = true;
+      const next = text(payload, true);
+      if (!next) return;
+      let delta = next;
+      if (provider === 'cli_proxy' && !(payload.streamMode === 'delta' || payload.mode === 'delta' || payload.delta === true)) {
+        if (full.startsWith(next)) return;
+        delta = next.startsWith(full) ? next.slice(full.length) : next; full = next;
+      } else full += next;
+      if (delta) onChunk(options.emitDelta ? delta : full);
+    });
+    if (provider === 'chatgpt' && !completed) throw new AiProviderError('AI_INVALID_RESPONSE', 502, 'ChatGPT stream ended before completion. Try again.');
+    return full;
+  };
   return {
     async generate(request, options = {}) {
       const { url, headers, body } = wire(request, false);
-      return withResponse(fetchImpl, url, headers, body, options, async response => text(parsePayload(await response.text()), false));
+      return withResponse(fetchImpl, url, headers, body, options, async response => provider === 'chatgpt' ? consumeStream(response, () => {}, options) : text(parsePayload(await response.text()), false), provider === 'chatgpt');
     },
     async stream(request, onChunk, options: ProviderOptions = {}) {
       const { url, headers, body } = wire(request, true);
-      return withResponse(fetchImpl, url, headers, body, options, async response => {
-        let full = '';
-        await readEvents(response, provider === 'ollama', payload => {
-          const next = text(payload, true);
-          if (!next) return;
-          let delta = next;
-          if (provider === 'cli_proxy' && !(payload.streamMode === 'delta' || payload.mode === 'delta' || payload.delta === true)) {
-            if (full.startsWith(next)) return;
-            delta = next.startsWith(full) ? next.slice(full.length) : next;
-            full = next;
-          } else full += next;
-          if (delta) onChunk(options.emitDelta ? delta : full);
-        });
-        return full;
-      });
+      return withResponse(fetchImpl, url, headers, body, options, response => consumeStream(response, onChunk, options), provider === 'chatgpt');
     }
   };
 }

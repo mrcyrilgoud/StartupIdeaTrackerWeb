@@ -20,6 +20,6 @@ export function AiSetupNotice() {
             </>}
             {(error || status?.connection) && <button type="button" className="text-sm text-accent" onClick={() => void refresh()}>Retry</button>}
         </div>
-        {editing && <div className="mt-4 border-t border-border pt-4"><AiConnectionEditor initialMode="add" /></div>}
+        {editing && <div className="mt-4 border-t border-border pt-4"><AiConnectionEditor initialMode="add" setupOnly onClose={() => setEditing(false)} /></div>}
     </aside>;
 }
