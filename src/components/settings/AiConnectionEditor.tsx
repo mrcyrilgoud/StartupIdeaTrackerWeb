@@ -175,7 +175,7 @@ export function AiConnectionEditor({ initialMode = 'closed', onClose, setupOnly 
         {!setupOnly && <>
         <div className="flex flex-wrap items-start justify-between gap-3">
             <div><h3 className="text-xl font-semibold">AI connections</h3><p className="text-sm text-text-secondary mt-1">{active ? `Active: ${active.name}` : 'Connect AI when you’re ready.'}</p>
-                {active?.kind === 'chatgpt' && status?.state === 'configured' && <p className="text-sm mt-1">Using ChatGPT plan · {usage}</p>}
+                {active?.kind === 'chatgpt' && active.hasSession && status?.state === 'configured' && <p className="text-sm mt-1">Using ChatGPT plan · {usage}</p>}
                 {status?.connection && status.state !== 'configured' && <p role="status" className="text-sm text-text-secondary mt-1">{status.message}</p>}
             </div>
             <button type="button" className="btn-primary" disabled={busy} onClick={event => show(undefined, event.currentTarget)}>Add connection</button>
@@ -219,7 +219,7 @@ export function AiConnectionEditor({ initialMode = 'closed', onClose, setupOnly 
                     {kind === 'chatgpt' && <div className="rounded-lg border border-border p-3 flex flex-col gap-2">
                         <p className="text-sm">Use your eligible ChatGPT plan for AI requests in this app.</p>
                         <p role="status" className="text-sm text-text-secondary">{auth?.message ?? 'Continue with ChatGPT to connect your account.'}</p>
-                        {auth?.account && <p className="text-sm break-words">{auth.account.email} · {auth.account.planUsageEnabled ? 'Using ChatGPT plan' : 'Plan usage disabled'} · {usage}</p>}
+                        {auth?.state === 'authenticated' && auth.account && <p className="text-sm break-words">{auth.account.email} · {auth.account.planUsageEnabled ? 'Using ChatGPT plan' : 'Plan usage disabled'} · {usage}</p>}
                         <div className="flex flex-wrap gap-2"><button type="button" className="btn-secondary !bg-black !text-white hover:!bg-neutral-800" disabled={auth?.state === 'pending'} onClick={() => { if (formRef.current?.reportValidity()) void run(async () => { const id = editingId && !dirty ? editingId : await saveDraft(); setAuth(await connectionsService.startAuth(id)); return 'Complete ChatGPT sign-in in your browser.'; }); }}>Continue with ChatGPT</button>
                             {auth?.state === 'pending' && <button type="button" className="btn-secondary" onClick={() => void run(async () => { setAuth(await connectionsService.cancelAuth(editingId!)); return 'Sign-in cancelled.'; })}>Cancel sign-in</button>}
                             {selected?.kind === 'chatgpt' && selected.hasSession && <button type="button" className="text-red-600 dark:text-red-400" onClick={() => void run(async () => { const result = await connectionsService.disconnectAuth(editingId!); setAuth(result); setTested(false); return result.message; })}>Disconnect account</button>}

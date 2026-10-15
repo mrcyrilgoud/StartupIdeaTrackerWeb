@@ -81,7 +81,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func startServer() {
-        let root = "__PROJECT_ROOT__"
+        guard let runtimeRoot = Bundle.main.resourceURL?.appendingPathComponent("app").path else { return }
+        let supportRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Startup Idea Tracker")
+        try? FileManager.default.createDirectory(at: supportRoot, withIntermediateDirectories: true)
         let logPath = (NSHomeDirectory() as NSString).appendingPathComponent("Library/Logs/Startup Idea Tracker.log")
         let logURL = URL(fileURLWithPath: logPath)
         FileManager.default.createFile(atPath: logPath, contents: nil)
@@ -90,22 +92,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let nodePath = "/opt/homebrew/bin/node"
         var environment = ProcessInfo.processInfo.environment
-        environment["APP_DB_PATH"] = "\(root)/data/app.sqlite"
+        environment["APP_DB_PATH"] = supportRoot.appendingPathComponent("app.sqlite").path
         environment["NODE_ENV"] = "production"
         environment["NODE_DISABLE_COMPILE_CACHE"] = "1"
         environment["HOME"] = NSHomeDirectory()
-        environment["PWD"] = root
         environment["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        for arguments in [
-            ["\(root)/dist-server/server/index.js"],
-            ["\(root)/scripts/start-ai-proxy.cjs"],
-            ["\(root)/node_modules/vite/bin/vite.js", "preview"]
-        ] {
+        let processes: [([String], String)] = [
+            (["\(runtimeRoot)/server.mjs"], runtimeRoot),
+            (["\(runtimeRoot)/proxy.cjs"], runtimeRoot)
+        ]
+        for (arguments, directory) in processes {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: nodePath)
             process.arguments = arguments
-            process.currentDirectoryURL = URL(fileURLWithPath: root)
-            process.environment = environment
+            process.currentDirectoryURL = URL(fileURLWithPath: directory)
+            var processEnvironment = environment
+            processEnvironment["PWD"] = directory
+            process.environment = processEnvironment
             process.standardInput = FileHandle.nullDevice
             process.standardOutput = logHandle
             process.standardError = logHandle
@@ -115,25 +118,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func waitForServer(attempt: Int) {
-        let request = URLRequest(url: URL(string: "http://127.0.0.1:4173")!, timeoutInterval: 1.0)
+        let request = URLRequest(url: URL(string: "http://127.0.0.1:3334/api/health")!, timeoutInterval: 1.0)
         URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
             guard let self else { return }
             DispatchQueue.main.async {
-                if (response as? HTTPURLResponse)?.statusCode == 200 {
-                    let health = URLRequest(url: URL(string: "http://127.0.0.1:3334/api/health")!, timeoutInterval: 1.0)
-                    URLSession.shared.dataTask(with: health) { _, healthResponse, _ in
-                        DispatchQueue.main.async {
-                            if (healthResponse as? HTTPURLResponse)?.statusCode == 200 || attempt >= 60 {
-                                self.webView.load(request)
-                            } else {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.waitForServer(attempt: attempt + 1) }
-                            }
-                        }
-                    }.resume()
-                } else if attempt >= 60 {
-                    self.webView.load(request)
+                if (response as? HTTPURLResponse)?.statusCode == 200 || attempt >= 300 {
+                    self.webView.load(URLRequest(url: URL(string: "http://127.0.0.1:3334")!))
                 } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         self.waitForServer(attempt: attempt + 1)
                     }
                 }

@@ -192,7 +192,8 @@ try {
       await page.getByPlaceholder('I have an idea for...').fill('ChatGPT subscription brainstorm'); await page.getByPlaceholder('I have an idea for...').press('Enter'); await visible(page.getByText(fixtures.brainstorm, { exact: true }));
       await goto('/settings'); await (await connectionRow('E2E ChatGPT')).getByRole('button', { name: 'Edit', exact: true }).click();
       await button('Disconnect account').click(); await visible(page.getByText('Disconnected this ChatGPT account.', { exact: true }));
-      assert.equal(await page.getByText(/^Using ChatGPT plan/).count(), 0, 'disconnected active account is not shown as using the plan');
+      const planLabels = page.getByText(/^Using ChatGPT plan/);
+      assert.equal(await planLabels.count(), 0, `disconnected active account is not shown as using the plan: ${JSON.stringify(await planLabels.allTextContents())}`);
       await button('Done').click(); await goto('/'); await gone(page.getByText(/^Using ChatGPT plan/));
       await api('/api/settings', 'PUT', { activeConnectionId: connectionId }); await goto('/settings');
     });

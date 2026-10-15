@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import type { AddressInfo } from 'node:net';
@@ -7,7 +10,7 @@ import { ConnectionService } from '../server/connections/ConnectionService.js';
 import { MemoryCredentialStore, CredentialStoreError } from '../server/credentials/CredentialStore.js';
 import { migrateSettings } from '../server/ai/migrateSettings.js';
 import { LEGACY_DEFAULT_APP_SETTINGS } from '../src/types.js';
-import { createHttpApp } from '../server/app.js';
+import { createHttpApp, serveFrontend } from '../server/app.js';
 import { createAiRuntime } from '../server/ai/runtime.js';
 
 function fixture() {
@@ -146,6 +149,31 @@ test('HTTP settings, credentials and backup import honor public contracts', asyn
     assert.equal(imported.length, 1); assert.equal(imported[0].testedRevision, null); assert.equal(imported[0].credentialRef, null);
     assert.equal((await call('/api/import', 'POST', { settings: { ...LEGACY_DEFAULT_APP_SETTINGS, geminiKey: 'legacy-secret' } })).status, 400);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('production server hosts built assets and SPA routes without masking API 404s', async () => {
+  const { store } = fixture();
+  const staticRoot = await mkdtemp(path.join(tmpdir(), 'startup-static-'));
+  await mkdir(path.join(staticRoot, 'assets'));
+  await writeFile(path.join(staticRoot, 'index.html'), '<!doctype html><title>Startup fixture</title>');
+  await writeFile(path.join(staticRoot, 'assets', 'app.js'), 'globalThis.fixture = true;');
+  const app = createHttpApp(store, {} as never);
+  serveFrontend(app, staticRoot);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    assert.match(await (await fetch(`${url}/`)).text(), /Startup fixture/);
+    assert.match(await (await fetch(`${url}/idea/example`, { headers: { Accept: 'text/html' } })).text(), /Startup fixture/);
+    assert.match(await (await fetch(`${url}/assets/app.js`)).text(), /fixture = true/);
+    assert.equal((await fetch(`${url}/assets/missing.js`)).status, 404);
+    const missingApi = await fetch(`${url}/api/not-a-route`, { headers: { Accept: 'text/html' } });
+    assert.equal(missingApi.status, 404);
+    assert.doesNotMatch(await missingApi.text(), /Startup fixture/);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(staticRoot, { recursive: true, force: true });
+  }
 });
 
 test('HTTP streams survive request-body completion and cancel upstream on disconnect', async () => {

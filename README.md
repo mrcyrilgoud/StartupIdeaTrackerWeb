@@ -68,6 +68,14 @@ If your AI CLI proxy checkout lives somewhere other than `../AI-CLI-Proxy-Server
 AI_CLI_PROXY_PATH=/path/to/AI-CLI-Proxy-Server npm run dev
 ```
 
+### Install The macOS App
+
+```bash
+bash scripts/export-macos-app.sh
+```
+
+The exporter builds and installs a self-contained local runtime at `/Applications/Startup Idea Tracker.app`, including the companion proxy from `../AI-CLI-Proxy-Server` (or `AI_CLI_PROXY_PATH`) and preserving the previous bundle as a timestamped rollback copy. On the first packaged install, it copies the current SQLite contents into `~/Library/Application Support/Startup Idea Tracker/app.sqlite`; later packaged launches use that Application Support database and do not depend on Desktop-folder access. The source database remains unchanged. Pass `--no-backup` only when an installed-app rollback copy is not wanted.
+
 ## AI Configuration
 
 On first run, choose **Set up AI** or continue capturing ideas without AI. There is no automatically selected provider. In Settings, choose **Add connection** to open the setup dialog. Save a named connection, run **Test connection**, then **Make active**. Editing opens the same dialog; **Done** closes it while keeping the connection saved. Tests send a small inference request and can consume usage. Editing a model, endpoint, tool, or key requires another test.

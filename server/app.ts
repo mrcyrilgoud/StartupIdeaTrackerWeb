@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { StructuredParseError, type BackendAiService } from './ai.js';
 import { MAX_HISTORY_SUMMARY_EVENTS, brainstormSchema, diffIdeaEventInputSchema, generateIdeasSchema, ideaChatSchema, ideaEventDiffSchema, ideaListQuerySchema, ideaReferenceSchema, ideaListReferenceSchema, ideaSummaryQuerySchema, importDataSchema, listIdeaEventsInputSchema, saveIdeaRequestSchema, suggestFoldersSchema, summarizeChatSchema, summarizeIdeaHistoryInputSchema, updateIdeaSchema, vetIdeasSchema } from './contracts.js';
-import { createIdeaMcpServer } from './mcp.js';
 import { getAllowedOrigins, SERVER_HOST } from './config.js';
 import { BadRequestError, NotFoundError } from './errors.js';
 import { AiConnectionError } from './errors.js';
@@ -604,11 +603,22 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService, conn
   });
 
   app.all('/mcp', async (req, res, next) => {
+    let modules;
+    try {
+      modules = await Promise.all([
+        import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
+        import('./mcp.js')
+      ]);
+    } catch (error) {
+      next(error);
+      return;
+    }
+    const [{ StreamableHTTPServerTransport }, { createIdeaMcpServer }] = modules;
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined
     });
     const server = createIdeaMcpServer(store, aiService);
-    const transportWithClose = transport as StreamableHTTPServerTransport & { close?: () => Promise<void> | void };
+    const transportWithClose = transport as typeof transport & { close?: () => Promise<void> | void };
     let cleanedUp = false;
     const cleanup = async () => {
       if (cleanedUp) return;
@@ -670,4 +680,18 @@ export function createHttpApp(store: AppStore, aiService: BackendAiService, conn
   });
 
   return app;
+}
+
+export function serveFrontend(app: ReturnType<typeof express>, staticRoot: string): void {
+  const indexPath = path.join(staticRoot, 'index.html');
+  app.use(express.static(staticRoot, { index: false }));
+  app.get('*', (req, res, next) => {
+    if (req.path === '/api' || req.path.startsWith('/api/') || req.path === '/mcp' || req.path.startsWith('/mcp/') || path.extname(req.path) || !req.accepts('html')) {
+      next();
+      return;
+    }
+    res.sendFile(indexPath, (error) => {
+      if (error && !res.headersSent) next(error);
+    });
+  });
 }
