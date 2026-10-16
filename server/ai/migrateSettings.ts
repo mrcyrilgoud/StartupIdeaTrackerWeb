@@ -3,10 +3,14 @@ import type { ConnectionService } from '../connections/ConnectionService.js';
 import type { StoredConnection } from '../connections/contracts.js';
 import { AiConnectionError } from '../errors.js';
 
+const MIGRATION_VERSION = '3';
+const LEGACY_GEMINI_MODEL = 'gemini-2.0-flash';
+const CURRENT_GEMINI_MODEL = 'gemini-3.6-flash';
+
 export async function migrateSettings(connections: ConnectionService, override?: LegacyAppSettings): Promise<void> {
   const { store } = connections;
   const browserPending = store.getMetadata('legacy_browser_migration_pending') === '1';
-  if (!override && store.getMetadata('ai_connections_migrated') === '2' && !browserPending) return;
+  if (!override && store.getMetadata('ai_connections_migrated') === MIGRATION_VERSION && !browserPending) return;
   if (override && store.listConnections().length > 0 && !browserPending && !connections.migrationError) return;
   const settings = override ?? store.getLegacySettings();
   const namespace = store.getDatabaseIdentity();
@@ -24,7 +28,15 @@ export async function migrateSettings(connections: ConnectionService, override?:
     if (override) store.setMetadata('legacy_browser_migration_pending', '1');
     // Migrate retained keys even when Ollama or the proxy was selected.
     if (settings.geminiKey.trim() || store.getConnection(geminiId)?.credentialRef) {
-      if (!store.getConnection(geminiId)) connections.create({ kind: 'api', provider: 'gemini', name: 'Migrated Gemini', model: 'gemini-2.0-flash' }, geminiId);
+      if (!store.getConnection(geminiId)) {
+        connections.create({ kind: 'api', provider: 'gemini', name: 'Migrated Gemini', model: CURRENT_GEMINI_MODEL }, geminiId);
+      } else {
+        const existing = store.getConnection(geminiId)!;
+        if (existing.kind === 'api' && existing.provider === 'gemini' && existing.model === LEGACY_GEMINI_MODEL) {
+          // Replacing a retired model invalidates its prior test and requires user verification.
+          await connections.update(geminiId, { model: CURRENT_GEMINI_MODEL });
+        }
+      }
       const previous = store.getConnection(geminiId)!;
       let snapshot = previous;
       const previousKey = previous.credentialRef ? await connections.credentials.get(previous.credentialRef) : null;
@@ -37,7 +49,8 @@ export async function migrateSettings(connections: ConnectionService, override?:
       // Capture configuration BEFORE waiting for Keychain; never bless a later revision.
       if (!snapshot.credentialRef || !await connections.credentials.get(snapshot.credentialRef)) throw new AiConnectionError('AI_CREDENTIAL_MISSING', 'Legacy API key migration is incomplete.');
       assertRevision(snapshot);
-      const testable = snapshot.kind === 'api' && snapshot.provider === 'gemini' && snapshot.model === 'gemini-2.0-flash';
+      // Key migration is not a provider inference, so never mark a new Gemini model tested here.
+      const testable = snapshot.kind === 'api' && snapshot.provider === 'gemini' && snapshot.model === CURRENT_GEMINI_MODEL && snapshot.testedRevision === snapshot.revision;
       snapshots.set(geminiId, { connection: snapshot, testable });
       if (settings.provider === 'gemini' && testable) selectedId = geminiId;
     }
@@ -65,7 +78,7 @@ export async function migrateSettings(connections: ConnectionService, override?:
       }
       store.clearLegacyKey();
       if (selectedId && !store.getMetadata('active_ai_connection')) store.activateTestedConnection(selectedId);
-      store.setMetadata('ai_connections_migrated', '2');
+      store.setMetadata('ai_connections_migrated', MIGRATION_VERSION);
       store.setMetadata('legacy_browser_migration_pending', '');
       store.setMetadata('ai_connections_migration_selected', '');
     });

@@ -7,6 +7,8 @@ import { CredentialStoreError } from '../credentials/CredentialStore.js';
 import type { ConnectionService } from './ConnectionService.js';
 import { connectionInputSchema, credentialWriteSchema, type StoredConnection } from './contracts.js';
 
+const CURRENT_GEMINI_MODEL = 'gemini-3.6-flash';
+
 /** Prepare all external credential writes before atomically importing SQLite data. */
 export async function importBackup(service: ConnectionService, payload: z.infer<typeof importDataSchema>) {
   const planned: Array<{ connection: StoredConnection; key?: string }> = [];
@@ -17,12 +19,16 @@ export async function importBackup(service: ConnectionService, payload: z.infer<
     planned.push({ connection: { ...metadata, id, revision: 1, testedRevision: null,
       credentialRef: key ? `${service.store.getDatabaseIdentity()}:${id}:${randomUUID()}` : null }, key });
   };
-  for (const connection of payload.connections ?? []) add(connection);
+  for (const connection of payload.connections ?? []) {
+    if (connection.kind === 'api' && connection.provider === 'gemini' && connection.model === 'gemini-2.0-flash') {
+      add({ ...connection, model: CURRENT_GEMINI_MODEL });
+    } else add(connection);
+  }
   if (payload.settings && 'provider' in payload.settings) {
     const legacy = { ...LEGACY_DEFAULT_APP_SETTINGS, ...payload.settings };
     if (legacy.geminiKey && !payload.importCredentials) throw new AiConnectionError('AI_CREDENTIAL_IMPORT_CONFIRMATION_REQUIRED', 'Confirm importing embedded API keys to Keychain.', 400);
     if (legacy.geminiKey || legacy.provider === 'gemini')
-      add({ kind: 'api', provider: 'gemini', name: 'Imported Gemini', model: 'gemini-2.0-flash' }, legacy.geminiKey || undefined);
+      add({ kind: 'api', provider: 'gemini', name: 'Imported Gemini', model: CURRENT_GEMINI_MODEL }, legacy.geminiKey || undefined);
     if (legacy.provider === 'ollama') add({ kind: 'api', provider: 'ollama', name: 'Imported Ollama', model: legacy.ollamaModel, baseUrl: legacy.ollamaEndpoint });
     else if (legacy.provider === 'cli_proxy') {
       const tool = legacy.cliCommandTemplate.trim().split(/\s+/)[0];

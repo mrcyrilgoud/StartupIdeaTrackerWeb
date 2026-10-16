@@ -97,7 +97,11 @@ test('legacy keys migrate with verified Keychain write and can retry after acces
   assert.ok(!JSON.stringify(await store.exportData()).includes('migration-secret'));
   denied = false; await migrateSettings(connections);
   assert.equal(connections.migrationError, null); assert.equal(store.getLegacySettings().geminiKey, '');
-  assert.equal((await connections.resolve()).apiKey, 'migration-secret');
+  const migrated = store.listConnections()[0];
+  assert.equal(migrated.model, 'gemini-3.6-flash');
+  assert.equal(migrated.testedRevision, null);
+  assert.equal((await connections.resolve(migrated.id)).apiKey, 'migration-secret');
+  assert.equal((await store.getSettings()).activeConnectionId, null);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM ai_connections').get()?.n, 1);
   await migrateSettings(connections); assert.equal(store.listConnections().length, 1);
 });

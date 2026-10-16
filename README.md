@@ -91,7 +91,7 @@ ChatGPT authentication uses OpenAI’s [registration flow](https://developers.op
 
 API keys and ChatGPT OAuth tokens are stored in **macOS Keychain**, using native bindings. SQLite stores connection metadata and credential references; the browser receives only credential-presence flags and safe account/status information. OAuth registration metadata and the persistent host ID stay out of backups; imported ChatGPT profiles require fresh sign-in. HTTP and stdio runtimes share a SQLite lease to coordinate rotating-token refreshes. The backend and stdio MCP share the database's active connection. Keychain access must be allowed for the Node process; other operating systems do not currently support storing API credentials in this app.
 
-Existing configured settings migrate once. Gemini keys are verified in Keychain before the legacy database field is cleared. If access is denied, allow access and use **Refresh connections** in Settings to retry. Empty Gemini defaults enter setup instead of failing the first AI request.
+Existing configured settings migrate once. Gemini keys are verified in Keychain before the legacy database field is cleared. Legacy Gemini models are upgraded to `gemini-3.6-flash` and must be tested in Settings before activation. If Keychain access is denied, allow access and use **Refresh connections** in Settings to retry. Empty Gemini defaults enter setup instead of failing the first AI request.
 
 Version-2 backups include ideas, folders, and credential-free connection metadata. Imported profiles are inactive and require credentials and testing. Legacy backups with embedded keys ask whether to import those keys into Keychain. Existing backup files and old database copies may still contain credentials and are not rewritten.
 

@@ -42,8 +42,13 @@ test('migration completion, plaintext cleanup and selection roll back together a
   assert.equal(store.getMetadata('ai_connections_migrated'), null);
   store.setMetadata = setMetadata; await migrateSettings(connections);
   assert.equal(connections.migrationError, null); assert.equal(store.getLegacySettings().geminiKey, '');
-  assert.equal((await connections.resolve()).apiKey, 'source-key');
+  const migrated = store.listConnections()[0];
+  assert.equal(migrated.model, 'gemini-3.6-flash');
+  assert.equal(migrated.testedRevision, null);
+  assert.equal((await connections.resolve(migrated.id)).apiKey, 'source-key');
+  assert.equal((await store.getSettings()).activeConnectionId, null);
   assert.equal(store.listConnections().length, 1);
+  assert.equal(store.getMetadata('ai_connections_migrated'), '3');
 });
 test('migration resumes previously persisted profile after the old plaintext source was cleared', async () => {
   const { store, connections } = fixture();
@@ -53,8 +58,57 @@ test('migration resumes previously persisted profile after the old plaintext sou
   await connections.setCredential(id, 'already-migrated-key');
   await migrateSettings(connections);
   assert.equal(connections.migrationError, null);
+  assert.equal(store.getConnection(id)?.model, 'gemini-3.6-flash');
+  assert.equal(store.getConnection(id)?.testedRevision, null);
+  assert.equal((await store.getSettings()).activeConnectionId, null);
+  assert.equal((await connections.resolve(id)).apiKey, 'already-migrated-key');
+});
+test('version 2 Gemini migrations upgrade retired models and require a fresh connection test', async () => {
+  const { store, connections } = fixture();
+  const id = `legacy-${store.getDatabaseIdentity()}`;
+  store.saveLegacySettings({ ...LEGACY_DEFAULT_APP_SETTINGS, provider: 'gemini' });
+  connections.create({ kind: 'api', name: 'Migrated Gemini', provider: 'gemini', model: 'gemini-2.0-flash' }, id);
+  await connections.setCredential(id, 'existing-key');
+  const stale = store.getConnection(id)!;
+  store.markConnectionTested(id, stale.revision);
+  store.activateTestedConnection(id);
+  store.setMetadata('ai_connections_migrated', '2');
+
+  await migrateSettings(connections);
+
+  const upgraded = store.getConnection(id)!;
+  assert.equal(upgraded.model, 'gemini-3.6-flash');
+  assert.equal(upgraded.testedRevision, null);
   assert.equal((await store.getSettings()).activeConnectionId, id);
-  assert.equal((await connections.resolve()).apiKey, 'already-migrated-key');
+  assert.equal((await connections.status()).state, 'needs_setup');
+  assert.equal(store.getMetadata('ai_connections_migrated'), '3');
+});
+test('legacy Gemini backup imports use the replacement model and remain untested', async () => {
+  const { store, connections } = fixture();
+  const payload = importDataSchema.parse({
+    settings: { ...LEGACY_DEFAULT_APP_SETTINGS, provider: 'gemini', geminiKey: 'backup-key' },
+    importCredentials: true
+  });
+
+  await importBackup(connections, payload);
+
+  const imported = store.listConnections()[0];
+  assert.equal(imported.model, 'gemini-3.6-flash');
+  assert.equal(imported.testedRevision, null);
+  assert.equal(imported.credentialRef ? await connections.credentials.get(imported.credentialRef) : null, 'backup-key');
+  assert.equal((await store.getSettings()).activeConnectionId, null);
+});
+test('version 2 backups upgrade retired Gemini connection models', async () => {
+  const { store, connections } = fixture();
+  const payload = importDataSchema.parse({
+    version: 2,
+    connections: [{ kind: 'api', provider: 'gemini', name: 'Old Gemini', model: 'gemini-2.0-flash' }]
+  });
+
+  await importBackup(connections, payload);
+
+  assert.equal(store.listConnections()[0].model, 'gemini-3.6-flash');
+  assert.equal(store.listConnections()[0].testedRevision, null);
 });
 test('invalid legacy backup connections never overwrite ideas before failing', async () => {
   const { store, connections } = fixture(); await store.saveIdea(idea);
@@ -78,7 +132,11 @@ test('browser legacy credential migration can retry while retaining its original
   await migrateSettings(connections, source); assert.ok(connections.migrationError);
   assert.equal(store.getMetadata('legacy_browser_migration_pending'), '1');
   deny = false; await migrateSettings(connections, source);
-  assert.equal(connections.migrationError, null); assert.equal((await connections.resolve()).apiKey, 'browser-key');
+  assert.equal(connections.migrationError, null);
+  const migrated = store.listConnections().find(connection => connection.provider === 'gemini')!;
+  assert.equal(migrated.model, 'gemini-3.6-flash');
+  assert.equal(migrated.testedRevision, null);
+  assert.equal((await connections.resolve(migrated.id)).apiKey, 'browser-key');
   assert.equal(store.getMetadata('legacy_browser_migration_pending'), null);
 });
 
